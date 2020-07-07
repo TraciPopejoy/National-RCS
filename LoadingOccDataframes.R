@@ -11,7 +11,7 @@ main_dir<-"occ_data" #where the occurrence data resides, one folder, one csv for
 taxa<-gsub('_.*','',list.files(main_dir)) #list the taxa we have occurrence data for
 
 
-for(q in taxa){
+for(q in taxa[1:maxsp]){
   occ_file_name<-list.files(main_dir, pattern=q, full.names = T)
   
   #assigning each csv to the correct G.species object
@@ -29,8 +29,8 @@ for(q in taxa){
 
 }
 
-Anurans_df<-bind_rows(mget(paste(substr(taxa,1,1), #pull genus inital out
-                                 gsub("[A-z ]*\\.","", taxa), #keep everything after the period
+Anurans_df<-bind_rows(mget(paste(substr(taxa[1:maxsp],1,1), #pull genus inital out
+                                 gsub("[A-z ]*\\.","", taxa[1:maxsp]), #keep everything after the period
                                  sep='.')))
 
 
@@ -47,3 +47,17 @@ double_sp<-Anurans_df %>% group_by(tax) %>%
   filter(grepl(', ', all.spp))
 write.csv(double_sp, paste0('rcs_results/double_sp_',
                                     format(Sys.Date(), '%Y%m%d'),'.csv'))
+
+
+#temporary fix for double species names
+spkey<-Anurans_df %>% group_by(tax) %>% 
+  summarize(all.spp=paste(unique(species), collapse=", ")) %>%
+  group_by(tax, all.spp) %>%
+  dplyr::select(tax, all.spp) %>% 
+  mutate(first_sp=gsub(',.*', '', all.spp),
+                     second_sp=substring(gsub('.*,', '', all.spp),2)) %>%
+  ungroup() %>% dplyr::select(-all.spp) %>%
+  gather("df", "species", -tax) %>% dplyr::select(-df)
+
+An_df_temp<-left_join(Anurans_df, spkey)
+                     
