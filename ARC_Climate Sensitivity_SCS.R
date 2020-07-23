@@ -1,19 +1,15 @@
 # National Fishes Vulnerability Assessment Project - "ARC_Climate Sensitivity_SCS.R"
 # Revised by Sam Silknetter, 29June2020
+# Revised by Traci DuBose, 19July2020
 
 # This code generates standard deviations of climate variables.
 
 # This code downloads PRISM climate data and requires a HPC.
 library(prism)
-library(zoo)
 library(tidyverse)
-library(rgdal)
+library(raster)
 library(sf)
-library(rgeos)
 library(dplyr)
-library(Matrix.utils)
-library(Hmisc)
-
 
 # Set data paths for input data. # All available through https://github.com/silknets/National-RCS.
 PATH_SHP_HUC12_AOO <- "/home/silknets/NFVAP/Shapefiles/HUC12"
@@ -24,8 +20,6 @@ PATH_PRISM_tmax <- "/home/silknets/NFVAP/PRISM/Tmax/"
 PATH_PRISM_tmin <- "/home/silknets/NFVAP/PRISM/Tmin/"
 PATH_PRISM_tmaxAug <- "/home/silknets/NFVAP/PRISM/TmaxAug/"
 PATH_PRISM_tminJan <- "/home/silknets/NFVAP/PRISM/TminJan/"
-PATH_Occupied_HUC12 <- "/home/silknets/NFVAP/Occupied HUCs/"
-PATH_NFVAP <- "/home/silknets/NFVAP/"
 
 # Create a list of input shapefiles for loop.
 FILES_watershed <- list.files(path=PATH_SHP_HUC12_AOO, pattern = "\\.shp$")
@@ -34,8 +28,21 @@ FILES_buffer <- list.files(path=PATH_SHP_1km, pattern = "\\.shp$")
 # Load Watershed shapefiles (as .rds) from path.
 HUC12_All <- readRDS(PATH_SHP_HUC12_All)
 
+# Make a binary dataframe of occupied watersheds per species.
+Ppt_Watershed_Occupied <- data.frame(matrix(NA, nrow = 100537, ncol = 145))
+colnames(Ppt_Watershed_Occupied) <- c("HUC_ID", substr(FILES_watershed, 1, nchar(FILES_watershed)-10))
+Ppt_Watershed_Occupied$HUC_ID <- HUC12_ppt_mean$HUC_ID
+
+# For loop to populate binary dataframe. 
+for(i in 1:length(FILES_watershed)){
+  dat.name <- substr(FILES_watershed[i], 1, nchar(FILES_watershed[i])-10)
+  Occupied_HUCs <- read.table(file = paste0(PATH_Occupied_HUC12, dat.name, ".txt"), sep = ",", header = T, colClasses = "character")
+  Ppt_Watershed_Occupied[, dat.name] <- as.integer(Ppt_Watershed_Occupied[1:100537,1] %in% Occupied_HUCs$Occupied_HUC)
+}
+
+write.csv(Ppt_Watershed_Occupied, file = paste0("/home/silknets/NFVAP/data_test.csv"), row.names=FALSE)
+
 # Create Mean and Standard Deviation functions to be used in script.
-  #Standard Mean and SD functions.
 mean_1 <- function(x, na.rm = TRUE) {
   mean(x, na.rm=TRUE)
 }
@@ -52,7 +59,6 @@ sd_2 = function(x, ...){
   l = sum(!is.na(x))
   sqrt(v*(l-1)/l)
 }
-
 
 #### PRECIPITATION CALCS ####
 
@@ -79,20 +85,6 @@ names(HUC12_ppt_mean)[names(HUC12_ppt_mean) == "layer"] <- "mean"
 HUC12_ppt_mean <- HUC12_ppt_mean [ , c(3, 2)] 
   saveRDS(HUC12_ppt_mean, file = "/home/silknets/NFVAP/PRISM/Ppt_Results/Watershed/HUC12_ppt_mean")
   HUC12_ppt_mean <- readRDS("/home/silknets/NFVAP/PRISM/Ppt_Results/Watershed/HUC12_ppt_mean")
-
-# Make a binary dataframe of occupied watersheds per species.
-Ppt_Watershed_Occupied <- data.frame(matrix(NA, nrow = 100537, ncol = 145))
-colnames(Ppt_Watershed_Occupied) <- c("HUC_ID", substr(FILES_watershed, 1, nchar(FILES_watershed)-10))
-Ppt_Watershed_Occupied$HUC_ID <- HUC12_ppt_mean$HUC_ID
-
-# For loop to populate binary dataframe. 
-for(i in 1:length(FILES_watershed)){
-  dat.name <- substr(FILES_watershed[i], 1, nchar(FILES_watershed[i])-10)
-  Occupied_HUCs <- read.table(file = paste0(PATH_Occupied_HUC12, dat.name, ".txt"), sep = ",", header = T, colClasses = "character")
-  Ppt_Watershed_Occupied[, dat.name] <- as.integer(Ppt_Watershed_Occupied[1:100537,1] %in% Occupied_HUCs$Occupied_HUC)
-}
-
-write.csv(Ppt_Watershed_Occupied, file = paste0("/home/silknets/NFVAP/data_test.csv"), row.names=FALSE)
 
 # Use matrix algebra to create a dataframe of SD per species. 
 Ppt_SD_table <- Ppt_Watershed_Occupied [,2:145] * c(HUC12_ppt_mean [,2])

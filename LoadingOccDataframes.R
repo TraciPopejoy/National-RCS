@@ -1,5 +1,5 @@
 # Script for loading occurance data quickly
-# last revised 2020July01 tpd
+# last revised 2020July17 tpd
 
 #load libraries
 library(tidyverse); library(lubridate)
@@ -54,3 +54,12 @@ testTax<-function(taxa){
   return(which(vec==0))
 }
 #synonym_names(itis_search(q="nameWOInd:Dryophytes\\ andersonii")$tsn)
+
+#tax_reference<-read.csv("data/AnuranTaxRef_20200708.csv")
+head(tax_reference)
+for(f in tax_reference$final.taxa){
+  sp_data <- Anurans_df %>%  
+    filter(final.taxa==f)   # only pull out one taxa (matches i)
+write.csv(sp_data, paste0("data/occ_data_used/",
+                          f, ".csv"))
+}
