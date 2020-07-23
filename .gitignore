@@ -2,3 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
+rcs_preliminary.R
+rcs_results/
+FixingDateError_TPD.R
+National-RCS.Rproj
