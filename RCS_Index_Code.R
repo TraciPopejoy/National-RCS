@@ -6,17 +6,8 @@
 #  an RCS output, and calculates Relative Climate Sensitivity index (RCS) for each species and range metric. 
 
 # Install and load necessary libraries.
-library(scales)
-library(readr)
 library(tidyverse)
-library(rgbif)
-library(sf)
-library(rgdal)
-library(sp)
-library(rgeos)
-library(adehabitatHR)
 
-library(tidyverse)
 # Import standard deviations for climatic data (indicate climate breath for each species).
 ppt_SD <- read.csv(file = "rcs_results/HUC_ppt_sd.csv.csv",
                    colClasses = c('X'="character")) %>% rename(HUC_ID='X')
@@ -37,8 +28,6 @@ huc_cs<-bind_rows(ppt_SD %>% mutate(climate_variable="ppt_CS"), #joining each cl
   rowwise() %>%
   mutate(mean_CS=mean(c(ppt_CS,tmax_CS))) #calculate the mean climate breadth
 
-#stoped here!!!!
-
 # Read in AOO dataframe as RCS Data.
 RCS_Data <- read.csv(file = "rcs_results/AOO HUC12 Output_20200721.csv") %>%
   dplyr::select(-X) %>%
@@ -48,11 +37,11 @@ RCS_Data <- read.csv(file = "rcs_results/AOO HUC12 Output_20200721.csv") %>%
 
 # Scale AOO values/grain between 0 and 1.
 RCS_Data$WS_AOO_scaled <- ((RCS_Data$huc12_area - min(RCS_Data$huc12_area))
-  /(max(RCS_Data$huc12_area, na.rm=TRUE) - min(RCS_Data$huc12_area, na.rm=TRUE)))
+  /(max(RCS_Data$huc12_area) - min(RCS_Data$huc12_area)))
 RCS_Data$BUF_AOO_scaled <- ((RCS_Data$dissolved_buffer_1km - min(RCS_Data$dissolved_buffer_1km))
-  /(max(RCS_Data$dissolved_buffer_1km, na.rm=TRUE) - min(RCS_Data$dissolved_buffer_1km, na.rm=TRUE)))
+  /(max(RCS_Data$dissolved_buffer_1km) - min(RCS_Data$dissolved_buffer_1km)))
 
-#1g. Subtract the scaled AOO values from 1 (so that low values = commonness, high values = vulnerability.
+# Subtract the scaled AOO values from 1 (so that low values = commonness, high values = vulnerability.
 RCS_Data$AOO_WS_adj <- (1 - RCS_Data$WS_AOO_scaled)
 RCS_Data$CS_WS_adj <- (1 - RCS_Data$WS_CS)
 RCS_Data$AOO_BUF_adj <- (1 - RCS_Data$BUF_AOO_scaled)
