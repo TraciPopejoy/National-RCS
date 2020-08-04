@@ -1,4 +1,4 @@
-# Area of Occupancy Code for the National Fishes Vulnerability Assessment - "Area of Occupancy Code_SCS.R"
+# Area of Occupancy Code for the National Anuran RCS Assessment - "Area of Occupancy Code_Anurans.R"
 # Revised by Sam Silknetter, 03April2020
 # edited on 2020July18 by TPD
 
@@ -7,6 +7,7 @@ library(sf); library(tidyverse); library(scales)
 
 # Set data paths.
 PATH_HUC12 <- '/home/tracidubose/huc12_wgs84_sf.rds'
+PATH_USAL48<- '/home/tracidubose/usal48_nad83_sf.rds'
 PATH_FocalSpecies_OccurrenceData <- "/home/tracidubose/RCS_Anuran_input/Anuran Occurrence Data/"
 PATH_SHP_HUC12 <- "/home/tracidubose/rcs_results/huc12_sp/"
 PATH_SHP_dis1km <- "/home/tracidubose/rcs_results/dis1km/"
@@ -17,7 +18,9 @@ crs.albers <- st_crs("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +
 
 # Read in fixed data.
 huc12<-readRDS(PATH_HUC12)
-st_crs(huc12)==crs.geo
+st_crs(huc12)==crs.geo #checking projection is correct
+usa_l48_albs<-readRDS(PATH_USAL48)
+st_crs(usa_l48_albs)==crs.albers
 
 # Create empty AOO data table to be populated.
 AOOs <- data.frame(scientific_name = character(), dissolved_buffer_1km = numeric(), 
@@ -31,7 +34,6 @@ AOOs <- data.frame(scientific_name = character(), dissolved_buffer_1km = numeric
 tax_reference<-read.csv("/home/tracidubose/RCS_Anuran_input/AnuranTaxRef_20200708.csv")
 anuran.taxa<-unique(tax_reference$final.taxa)
 head(anuran.taxa)
-#testTax(anuran.taxa) #custom function in LoadingOccDataframes, returns integer(0) if all taxa valid
 
 for(i in 1:length(anuran.taxa)){
   #load the data into geodata [!not split by time yet]
@@ -58,7 +60,8 @@ for(i in 1:length(anuran.taxa)){
   dat_sp <- st_transform(dat_sp, crs.albers) #overwrites to the new projection (save on memory)
     
   # Create 1 km buffer and calculate the total area occupied per species.
-  dissolved_1km_buffer <- st_union(st_buffer(dat_sp, dist = 1))
+  dat_sp_us<-st_filter(dat_sp, st_as_sf(usa_l48_albs)) 
+  dissolved_1km_buffer <- st_union(st_buffer(dat_sp_us, dist = 1))
   AOOs[i,]$dissolved_buffer_1km <- st_area(dissolved_1km_buffer)
     
   # Save the spatial dataframes as ESRI Shapefiles. 
