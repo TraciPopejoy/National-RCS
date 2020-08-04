@@ -120,3 +120,81 @@ de_dat_sp_usa<-st_filter(de_dat_sp, st_as_sf(usa_l48_albs))
 ggplot()+geom_sf(data=usa_l48_albs)+
   geom_sf(data=de_dat_sp, color="blue")+
   geom_sf(data=de_dat_sp_usa, color="red", alpha=0.3)
+
+#### Investigating how RCW components shift based on Spatial Extent ####
+# I am only using the buffers for comparability. I don't think mexico has equivalent HUC12s
+# subset of taxa based on percentage range within US 
+anuran.taxa.sub<-c('Dryophytes eximius','Dryophytes wrightorum',
+                   'Rana luteiventris','Lithobates pipiens',
+                   'Lithobates yavapaiensis','Lithobates onca',
+                   'Leptodactylus fragilis','Anaxyrus canorus')
+
+subAOOs <- data.frame(scientific_name = character(), 
+                      aoo_na = numeric(), 
+                      aoo_usal48 = numeric(),
+                      stringsAsFactors = F)
+
+for(i in 1:length(anuran.taxa.sub)){
+  #load the data into geodata
+  geodata<-read.csv(paste0(PATH_FocalSpecies_OccurrenceData, anuran.taxa.sub[i], ".csv")) %>%
+    dplyr::select(family, genus, species, Longitude, Latitude, year, source, final.taxa)
+  
+  # Convert from 'geodata' CSV to a sf object. 
+  dat_sp <- st_as_sf(geodata, coords=c("Longitude","Latitude"), crs = crs.geo) #Save spatial dataframe with correct projection.
+  
+  # Set column 1 in AOOs to species name.
+  subAOOs[i,1] <- as.character(dat_sp$final.taxa[1])
+  
+  # Generate 1km point buffers. You must use a projected CRS for function gBuffer(). For CRS, we use: USA Contiguous albers equal area. 
+  dat_sp <- st_transform(dat_sp, crs.albers) #overwrites to the new projection (save on memory)
+  
+  #this number will be a result of the filtering completed at the occurrence data curation step
+  dissolved_1km_buffer <- st_union(st_buffer(dat_sp, dist = 1))
+  subAOOs[i,]$aoo_na <- st_area(dissolved_1km_buffer)
+  
+  # Filter points that are within the contiguous US, create the buffer, & calculate area
+  dat_sp_usa<-st_filter(dat_sp, st_as_sf(usa_l48_albs)) 
+  d1km_buff_usa <- st_union(st_buffer(dat_sp_usa, dist = 1))
+  subAOOs[i,]$aoo_usal48 <- st_area(d1km_buff_usa)
+  
+  # Save the spatial dataframes as ESRI Shapefiles. 
+  species <- geodata$final.taxa[1] # Identify the species name for CSV output. 
+  st_write(d1km_buff_usa, dsn = paste0("rcs_results/subsp_range_us/", species, "_1kmUSA.shp"))
+  st_write(dissolved_1km_buffer, dsn = paste0("rcs_results/subsp_range_na/", species, "_1kmNAC.shp"))
+}
+
+subRCS<-subAOOs %>%
+  mutate(aoo_na_r=rank(aoo_na),
+         aoo_na_scaled=1-((aoo_na-min(aoo_na))/(max(aoo_na)-min(aoo_na))),
+         aoo_us_r=rank(aoo_usal48),
+         aoo_us_scaled=1-((aoo_usal48-min(aoo_usal48))/(max(aoo_usal48)-min(aoo_usal48))))
+subRCS
+
+library(ggrepel)
+ggplot() + 
+  geom_abline(slope=1, intercept=0)+
+  geom_point(data=subRCS[subRCS$scientific_name!="Lithobates pipiens",], 
+             aes(x=aoo_na_scaled, y=aoo_us_scaled), alpha=0.5)+
+  geom_text_repel(data=subRCS[subRCS$scientific_name!="Lithobates pipiens",],
+                  aes(x=aoo_na_scaled, y=aoo_us_scaled, label=scientific_name),
+                  size=3)+
+  scale_x_continuous("AOO in N American Continent")+
+  scale_y_continuous("AOO in Contiguous US")+
+  theme_bw()
+
+
+# Extract precipitation data from each species 1km buffer AOO. 
+#! stuck here, need ARC files to access prism rasters
+anuran.taxa.sub
+
+for(i in 1:length(anuran.taxa.sub)){
+  dat.name <- anuran.taxa.sub[i] # Use shapefile name without file extensions.
+  spp_BUF_na <- st_read("rcs_results/subsp_range_na", 
+                        paste0(dat.name,"_1kmNAC")) # Read in dissolved shapefile.
+  # Removed buffer b/c of input shapefile.
+  BUF_ppt_mean <- raster::extract(mean_ppt, spp_BUF_na, weights = TRUE, small = TRUE, method = 'simple', df = TRUE) 
+  BUF_ppt_mean <- na.omit(BUF_ppt_mean)
+  unlist(lapply(BUF_ppt_mean, sd_1))
+  Ppt_Buffer[, dat.name] <- sqrt(wtd.var(BUF_ppt_mean$layer, BUF_ppt_mean$weight, na.rm = TRUE, normwt = TRUE))
+}
+
