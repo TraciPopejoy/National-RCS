@@ -43,11 +43,25 @@ length(unique(amphibio_anurans_filt$final.taxa))
 # so 103 taxa in this database
 # need to investigate how they built taxa table
 
+View(amphibio_anurans_filt)
+library(tidyverse)
 globalTherm<-read.csv('C:/Users/Owner/Downloads/GlobTherm/GlobalTherm_upload_02_11_17.csv')
 names(globalTherm)
-globalTherm %>% as_tibble() %>%
+anuran_therm<-globalTherm %>% as_tibble() %>%
   filter(Order=="Anura") %>%
   mutate(taxa=paste(Genus, Species)) %>%
-  dplyr::select(taxa, everything()) %>%
+  dplyr::select(taxa, everything())
+anuran_therm %>%
   #filter(taxa %in% tax_reference$final.taxa) %>%
   group_by(Genus, max_metric) %>% tally()
+anuran_therm %>% 
+  filter(taxa %in% tax_reference$final.taxa) %>%
+  dplyr::select(taxa, max_metric, lat_min, long_min, location_min, elevation_min)
+
+
+#### what is in the literature? ####
+library(rwos)
+sid <- wos_authenticate() #have to be at a campus (or VPN) that has access to WoS
+res <- wos_search(sid, "TS=Anura* tadpole temperature min*")
+pubs <- wos_retrieve(res)
+View(pubs)
