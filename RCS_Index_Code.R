@@ -1,36 +1,36 @@
 # National Fishes Vulnerability Assessment Project - "RCS_Index_Code.R"
 # Revised by Sam Silknetter, 29June2020
-# Revised by Traci Dubose, 24July2020
+# Revised by Traci DuBose, 24July2020
 
-# This code calculates Climate Sensitivity (CS) from standard deviation values, merges prior calculations into
-#  an RCS output, and calculates Relative Climate Sensitivity index (RCS) for each species and range metric. 
+# This code calculates Climate Sensitivity (CS) from standard deviation values, merges prior AOO calculations into
+#  an RCS output, and calculates Rarity and Climate Sensitivity index (RCS) for each species and range metric. 
 
 # Install and load necessary libraries.
 library(tidyverse)
 
 # Import standard deviations for climatic data (indicate climate breath for each species).
-ppt_SD <- read.csv(file = "rcs_results/HUC_ppt_sd.csv.csv",
-                   colClasses = c('X'="character")) %>% rename(HUC_ID='X')
-Tmax_SD <- read.csv(file = "rcs_results/HUC_tmax_sd.csv.csv",
-                    colClasses = c('X'="character")) %>% rename(HUC_ID='X')
-Tmin_SD <- read.csv(file = "rcs_results/HUC_tmin_sd.csv.csv",
-                    colClasses = c('X'="character")) %>% rename(HUC_ID='X')
+ppt_SD <- read.csv(file = "data/HUC_ppt_sd.csv") %>% select(-X)
+Tmax_SD <- read.csv(file = "data/HUC_tmax_sd.csv") %>% select(-X)
+Tmin_SD <- read.csv(file = "data/HUC_tmin_sd.csv") %>% select(-X)
+Tmean_SD <- read.csv(file = "data/HUC_tmean_sd.csv") %>% select(-X) 
 
 # Scale standard deviations for each climatic variable (n=5) and grain (n=2) between 0 and 1. ###
 #HUC12 grain size
 huc_cs<-bind_rows(ppt_SD %>% mutate(climate_variable="ppt_CS"), #joining each climate variable sd
-          Tmax_SD %>% mutate(climate_variable="tmax_CS")) %>%
+          Tmax_SD %>% mutate(climate_variable="tmax_CS"),
+          Tmin_SD %>% mutate(climate_variable="tmin_CS"),
+          Tmean_SD %>% mutate(climate_variable="tmean_CS")) %>%
   group_by(climate_variable) %>% #group_by to scale the climate variables appropriately
-  mutate(var_CS_index = (sd_of_env_mean-min(sd_of_env_mean))/
-           (max(sd_of_env_mean)-min(sd_of_env_mean))) %>%
+  mutate(var_CS_index = (sd_of_env_mean-min(sd_of_env_mean))/ #calculating the index
+                        (max(sd_of_env_mean)-min(sd_of_env_mean))) %>%
   dplyr::select(-sd_of_env_mean) %>% # removing the climate sd raw values
   pivot_wider(names_from='climate_variable',values_from='var_CS_index') %>% #switching from long to wide dataframe
   rowwise() %>%
-  mutate(mean_CS=mean(c(ppt_CS,tmax_CS))) #calculate the mean climate breadth
+  mutate(WS_CS=mean(c(ppt_CS,tmax_CS, tmin_CS, tmean_CS))) #calculate the mean climate breadth
 
 # Read in AOO dataframe as RCS Data.
 RCS_Data <- read.csv(file = "rcs_results/AOO HUC12 Output_20200721.csv") %>%
-  dplyr::select(-X) %>%
+  dplyr::select(-X, -sd_Rank, -DFdif, -cv, -mean_Rank, -range, -StandardizedMean) %>%
   mutate(scientific_name=sub(" ",".",scientific_name)) %>%
   full_join(huc_cs, by='scientific_name') #%>%
   #full_join(buff_cs, by='scientific_name')
@@ -53,4 +53,4 @@ RCS_Data$RCS_WS <- ((RCS_Data$AOO_WS_adj + RCS_Data$CS_WS_adj)/2)
 RCS_Data$RCS_BUF <- ((RCS_Data$AOO_BUF_adj + RCS_Data$CS_BUF_adj)/2)
 
 # Exports RCS data table.
-write.csv(RCS_Data, file = "/home/silknets/NFVAP/RCS_05June2020.csv")
+write.csv(RCS_Data, file = paste0("rcs_results/RCS_table_", format(Sys.Date(), "%Y%m%d"),".csv"))

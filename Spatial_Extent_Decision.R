@@ -1,4 +1,4 @@
-# Determining Anuran AOO within contiguous US - "species_range.R"
+# Determining Anuran AOO within contiguous US - "Spatial_Extent_Decision.R"
 # edited on 2020Aug03 by TPD
 
 # Install necessary libraries.
@@ -9,7 +9,7 @@ PATH_FocalSpecies_OccurrenceData <- "data/occ_data_used/"
 PATH_tax_ref <- "data/AnuranTaxRef_20200708.csv"
 
 # load the two spatial extents
-US <- map_data("state")#converts state map to dataframe for mapping with ggplot2
+US <- map_data("state") #converts state map to dataframe for mapping with ggplot2
 usa <- maps::map("usa") #gets map for subsetting entries. Map of the lower 48 obtained through Package ‘maps’
 #version 3.3.0 (Becker et al. 2018) in Program R (R Core Team 2016);
 main <- map_data("usa", region=c("main"))#subsets map points to only mainland, no islands
@@ -94,6 +94,7 @@ ggplot()+
 ggsave('rcs_results/figures/sp_range_accum_lowper.jpg',
        width=6, height = 4)
 
+
 #### testing Smilisca baudinii and Dryophytes eximius ####
 #Smilisca baudinii
 sb_geodata<-read.csv(paste0(PATH_FocalSpecies_OccurrenceData, 
@@ -120,6 +121,19 @@ de_dat_sp_usa<-st_filter(de_dat_sp, st_as_sf(usa_l48_albs))
 ggplot()+geom_sf(data=usa_l48_albs)+
   geom_sf(data=de_dat_sp, color="blue")+
   geom_sf(data=de_dat_sp_usa, color="red", alpha=0.3)
+
+#Rhinophrynus dorsalis
+rd_geodata<-read.csv(paste0(PATH_FocalSpecies_OccurrenceData, 
+                            "Rhinophrynus dorsalis",
+                            ".csv")) %>%
+  dplyr::select(family, genus, species, Longitude, Latitude, year, source, final.taxa)
+rd_dat_sp <- st_as_sf(rd_geodata, coords=c("Longitude","Latitude"), crs = crs.geo) #Save spatial dataframe with correct projection.
+rd_dat_sp <- st_transform(rd_dat_sp, crs=crs.albers)
+rd_dat_sp_usa<-st_filter(rd_dat_sp, st_as_sf(usa_l48_albs)) 
+
+ggplot()+geom_sf(data=usa_l48_albs)+
+  geom_sf(data=rd_dat_sp, color="blue")+
+  geom_sf(data=rd_dat_sp_usa, color="red", alpha=0.3)
 
 #### Investigating how RCW components shift based on Spatial Extent ####
 # I am only using the buffers for comparability. I don't think mexico has equivalent HUC12s
@@ -198,3 +212,54 @@ for(i in 1:length(anuran.taxa.sub)){
   Ppt_Buffer[, dat.name] <- sqrt(wtd.var(BUF_ppt_mean$layer, BUF_ppt_mean$weight, na.rm = TRUE, normwt = TRUE))
 }
 
+#### investigating species of conservation concern ####
+NatGCC_list<-read.delim("C:/Users/Owner/Downloads/data (2).csv", sep="|", header=T) %>%
+  dplyr::select(-Taxonomic.Group) %>%
+  rename(scientific_name='Scientific.Name', nStates_2005='X..of.States.2005',
+         nStates_2015='X..of.States.2015',)
+
+check_natcc_taxa<-NatGCC_list %>% pull(scientific_name)
+
+library(ritis)
+amph_tax_list<-data.frame(scientific_name=character(),
+                          valid_T=character(),
+                          Order=character())
+for(u in 1:length(check_natcc_taxa)){
+  amph_tax_list[u,]$scientific_name<-check_natcc_taxa[u]
+  hold<-itis_search(q=paste0('nameWOInd:',gsub(' ','\\ ', check_natcc_taxa[u], fixed=T)))
+  if(nrow(hold)>1){
+    hold<-hold %>% filter(usage=="valid")
+  }
+  amph_tax_list[u,]$valid_T<-paste(hold$usage, collapse=", ")
+  if(hold$usage=="invalid"){
+      amph_tax_list[u,]$Order<-"UNK"
+  }else{
+      amph_tax_list[u,]$Order<-hierarchy_full(tsn = hold$tsn) %>%
+        filter(rankname=='Order') %>% pull(taxonname)}
+  print(amph_tax_list$scientific_name[u])
+}
+
+View(amph_tax_list)
+test<-amph_tax_list %>% filter(Order %in% c("UNK", "Anura")) %>% 
+  left_join(tax_reference, by=c('scientific_name'='species'))
+  
+View(test %>%
+  filter(is.na(tax)))
+View(spp_cc_2015 %>% filter(State=="Virginia"))
+spp_cc_2015<-NatGCC_list %>% 
+  dplyr::select(scientific_name, States.2015) %>%
+  separate(States.2015, into=c(paste0('x', 1:20)), sep=',')%>%
+  pivot_longer(-scientific_name, names_to='delete', values_to='State') %>%
+  filter(!is.na(State)) %>%
+  select(-delete) %>%
+  left_join(tax_reference, by=c('scientific_name'='final.taxa'))
+
+#quick check to see if sp with low per in US are on GCC list
+
+persp<-read.csv('rcs_results/sp_range_within_US.csv')
+lowAOOtax<-persp %>% filter(per_inside_us <.40) %>% pull(scientific_name)
+NatGCC_list %>% filter( scientific_name %in% lowAOOtax) %>% arrange(desc(nStates_2015)) %>%
+  left_join(persp)
+spp_cc_2015 %>% filter(State=="Virginia",
+                       !is.na(tax))
+View(left_join(persp, NatGCC_list))
