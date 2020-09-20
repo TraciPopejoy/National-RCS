@@ -1,10 +1,10 @@
 # Investigating how the Anuran RCS aligns with conservation status - 'RCS_Conserv_Status.R'
-# Revised by Traci DuBose, 15Aug2020
+# Revised by Traci DuBose, 20Sept2020
 
 library(tidyverse)
 
 #paths for data files
-PATH_RCS_index<-'/home/tracidubose/rcs_results/RCS_table_20200726.csv'
+PATH_RCS_index<-'results/RCS_table_20200920.csv'
 PATH_NatSGCN<-'data/National_SpGCC.csv'
 PATH_FedESA<-'data/FWS_Species_Data_Explorer.csv'
 
@@ -12,7 +12,7 @@ PATH_FedESA<-'data/FWS_Species_Data_Explorer.csv'
 RCS_index<-read.csv(PATH_RCS_index)
 
 #isolate anuran genus for quick pull from Nat SGCN
-anuran_genus<-unique(gsub(";.*","", gsub("\\.", ";", RCS_index$scientific_name)))
+anuran_genus<-unique(gsub(";.*","", gsub("\\ ", ";", RCS_index$scientific_name)))
 
 # Load the lists of species of conservation concern
 # National Species of Greatest Conservation Need - https://www1.usgs.gov/csas/swap/
@@ -88,7 +88,7 @@ IUCN_anuran %>% filter(IUCNcategory=='UNK')
 iucn_cat<-c(UNK='Not listed', LC='Least Concern', NT='Near Threatened', VU='Vulnerable', 
   EN='Endangered', CR='Critically Endangered', EW='Extinct in the wild', EX ='Extinct')
 
-### graph ####
+### RCS & conservation graph ####
 RCS_index_con<-RCS_index %>%
   #only want these two columns
   dplyr::select(scientific_name, RCS_WS) %>%
@@ -122,8 +122,6 @@ RCS_index_con<-RCS_index %>%
                              T~'no range issue'))
 str(RCS_index_con)
 
-### to do: remove outliers at each conservation ranking (they get double plotted as points)
-
 plot_common_elements<-ggplot(data=RCS_index_con)+
   scale_color_manual(guide=F, values=c('grey', 'black'))+
   scale_y_continuous("RCS at HUC12 grain")+
@@ -132,15 +130,18 @@ plot_common_elements<-ggplot(data=RCS_index_con)+
   theme(axis.text.x = element_text(angle=30, hjust=.9))
 plot_iucn<-plot_common_elements+
   geom_jitter(aes(x=`IUCN Red List`, y=RCS_WS, color=RangeIssue))+
-  geom_boxplot(aes(x=`IUCN Red List`, y=RCS_WS), alpha=0.3)+
+  geom_boxplot(aes(x=`IUCN Red List`, y=RCS_WS), alpha=0.3,
+               outlier.alpha = 0)+
   ggtitle('\nIUCN Red List')
 plot_esa<-plot_common_elements+
   geom_jitter(aes(x=`Endangered Species Act`, y=RCS_WS, color=RangeIssue))+
-  geom_boxplot(aes(x=`Endangered Species Act`, y=RCS_WS), alpha=0.3)+
+  geom_boxplot(aes(x=`Endangered Species Act`, y=RCS_WS), alpha=0.3,
+               outlier.alpha = 0)+
   ggtitle('Endangered\nSpecies Act')
 plot_sgcn<-plot_common_elements+
   geom_jitter(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS, color=RangeIssue))+
-  geom_boxplot(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS), alpha=0.3)+
+  geom_boxplot(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS), alpha=0.3,
+               outlier.alpha = 0)+
   ggtitle('Species of Greatest\nConserv. Need')
 
 #plot all in one row
@@ -148,56 +149,23 @@ install.packages('cowplot')
 library(cowplot)
 plot_grid(plot_esa, plot_sgcn, plot_iucn, nrow=1, 
           rel_widths = c(.8,.8,1))
-ggsave('/home/tracidubose/rcs_results/RCS_con_20200818.jpg', width=6, height=4)
+ggsave(paste0('results/RCS_con_', format(Sys.Date(),'%Y%m%d'),
+              '.jpg'), width=6, height=4)
 
+# RCS & conservation status quantification ----
 
-### removing low range species from RCS ###
-RCS_index_filt<-RCS_index %>%
-  mutate(scientific_name=gsub('\\.',' ', scientific_name)) %>%
-  filter(!(scientific_name %in% c('Smilisca baudinii','Dryophytes eximius',
-                                'Leptodactylus fragilis','Smilisca fodiens',
-                                'Rhinophrynus dorsalis','Anaxyrus hemiophrys',
-                                'Eleutherodactylus guttilatus'))) %>%
-  dplyr::select(-WS_AOO_scaled, -BUF_AOO_scaled, -AOO_WS_adj, -CS_WS_adj, -AOO_BUF_adj,
-                -RCS_WS)
+# isolating sub species identified in SWAP or ESA ----
+subsp.natgcc <- NatGCC_list %>%
+  filter(!is.na(subsp),
+         genus %in% anuran_genus) %>%
+  mutate(sspp=paste(genus, species, subsp)) %>%
+  pull(sspp)
+subsp.esa <- esa_anuran_spp %>% 
+  filter(Entity.Description != 'Wherever found')
 
-RCS_index_filt$WS_AOO_scaled <- ((RCS_index_filt$huc12_area - min(RCS_index_filt$huc12_area))
-                           /(max(RCS_index_filt$huc12_area) - min(RCS_index_filt$huc12_area)))
-RCS_index_filt$BUF_AOO_scaled <- ((RCS_index_filt$dissolved_buffer_1km - min(RCS_index_filt$dissolved_buffer_1km))
-                            /(max(RCS_index_filt$dissolved_buffer_1km) - min(RCS_index_filt$dissolved_buffer_1km)))
-
-# Subtract the scaled AOO values from 1 (so that low values = commonness, high values = vulnerability.
-RCS_index_filt$AOO_WS_adj <- (1 - RCS_index_filt$WS_AOO_scaled)
-RCS_index_filt$CS_WS_adj <- (1 - RCS_index_filt$WS_CS)
-RCS_index_filt$AOO_BUF_adj <- (1 - RCS_index_filt$BUF_AOO_scaled)
-
-# Calculate Relative Climate Sensitivity Index by taking average of "1-AOO" and "1-CS".
-#  Where large values of RCS indicate species with small AOO and low range of climate variables.
-RCS_index_filt$RCS_WS <- ((RCS_index_filt$AOO_WS_adj + RCS_index_filt$CS_WS_adj)/2)
-
-RCS_index_filt_con<-left_join(RCS_index_filt, 
-                              RCS_index_con %>% dplyr::select(-RCS_WS), 
-                              by='scientific_name')
-
-plot_common_elements1<-ggplot(data=RCS_index_filt_con)+
-  scale_color_manual(guide=F, values=c('grey', 'black'))+
-  scale_y_continuous("RCS at HUC12 grain")+
-  scale_x_discrete("")+
-  theme_bw()+
-  theme(axis.text.x = element_text(angle=30, hjust=.9))
-plot_iucn1<-plot_common_elements1+
-  geom_jitter(aes(x=`IUCN Red List`, y=RCS_WS, color=RangeIssue))+
-  geom_boxplot(aes(x=`IUCN Red List`, y=RCS_WS), alpha=0.3)+
-  ggtitle('\nIUCN Red List')
-plot_esa1<-plot_common_elements1+
-  geom_jitter(aes(x=`Endangered Species Act`, y=RCS_WS, color=RangeIssue))+
-  geom_boxplot(aes(x=`Endangered Species Act`, y=RCS_WS), alpha=0.3)+
-  ggtitle('Endangered\nSpecies Act')
-plot_sgcn1<-plot_common_elements1+
-  geom_jitter(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS, color=RangeIssue))+
-  geom_boxplot(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS), alpha=0.3)+
-  ggtitle('Species of Greatest\nConserv. Need')
-
-plot_grid(plot_esa1, plot_sgcn1, plot_iucn1, nrow=1, 
-          rel_widths = c(.8,.8,1))
-ggsave('/home/tracidubose/rcs_results/RCS_con_norange_20200818.jpg', width=6, height=4)
+occurance.data<-read.csv('data/anuran_occ_all20200708.csv') %>%
+  mutate(subspp=case_when(is.na(Taxon)~paste(species, infraspecificEpithet),
+                          T~Taxon))
+subspp_occ <- occurance.data %>%
+  filter(subspp %in% subsp.natgcc)
+unique(subspp_occ$subspp)
