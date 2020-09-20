@@ -217,55 +217,5 @@ ggplot()+
 onespp_Huc12 %>% filter(grepl('Lake Superior', name)) %>%
   ggplot()+geom_sf()
 
-
-canada_hucs<-huc12 %>% filter(grepl('CN,MI',states))
-canada_hucs
-ggplot()+geom_sf(data=canada_hucs, aes(fill=shape_Area))
-ggplot()+geom_sf(data = canada_hucs[3,])
-huc12_fronts<-huc12 %>% filter(hutype == "F",
-                               grepl('Lake Superior', name)|grepl('Lake Huron', name)|grepl('Lake Michigan', name)|
-                                 grepl('Lake Erie', name)|grepl('Lake Ontario', name)) %>%
-  arrange(desc(shape_Length))
-head(huc12_fronts)
-ggplot()+geom_sf(data=huc12_fronts[1:4,], aes(fill=WSAREA))
-ggplot()+geom_sf(data=huc12_fronts)
-ggplot()+geom_density(aes(x=huc12$WSAREA))+
-  scale_x_continuous(lim=c(1000,2000))
-View(huc12 %>% filter(WSAREA > 1000, WSAREA <2000))
-head(PRISM_ppt)
-nrow(huc12)
-huc12 %>% filter(!(as.character(huc12) %in% PRISM_ppt$HUC_ID))
-names(huc12)                     
-missing<-hucIDlong %>% filter(!(watershed_ID %in% PRISM_ppt$HUC_ID)) %>%
-  pull(watershed_ID) %>% unique()
-huc12 %>% filter(huc12 %in% missing) %>% arrange(desc(WSAREA))
-
-
-ppt_old<- read.csv('/home/tracidubose/prism_files/HUC binary files/ppt_huc12_binary_matrix.csv')
-PRISM.ppt<-ppt_old %>% 
-  mutate(HUC12_ID=case_when(nchar(X)==11~paste0('0', as.character(X)),
-                            T~as.character(X))) %>%
-  dplyr::select(-X) %>% dplyr::select(HUC12_ID, everything()) %>%
-  pivot_longer(-HUC12_ID) %>%
-  group_by(HUC12_ID) %>%
-  filter(value!=0) %>%
-  dplyr::summarize(mean.ppt.traci=mean(value))
-left_join(PRISM.ppt, PRISM_ppt, by=c("HUC12_ID"="HUC_ID")) %>% 
-  mutate(difference.ppt=mean.ppt.traci-mean) %>%
-  ggplot()+geom_density(aes(x=difference.ppt))
-### got different values than Sam.... idk why
-
-
 frogs_in_hucs<- hucIDlong %>% 
   group_by(watershed_ID) %>% dplyr::summarize(all_frogs=paste(taxa, collapse=', '))
-
-View(huc12 %>% filter(huc12 %in% hucIDlong$watershed_ID) %>%
-  filter(hutype=="F") %>% 
-  left_join(frogs_in_hucs, by=c('huc12'='watershed_ID'))%>%
-  dplyr::select(huc12, WSAREA, states, name, all_frogs))
-
-huc12 %>% filter(huc12 %in% hucIDlong$watershed_ID) %>%
-  filter(grepl('AK', states)) %>%
-  left_join(frogs_in_hucs, by=c('huc12'='watershed_ID'))%>%
-  dplyr::select(huc12, WSAREA, states, name, all_frogs) %>%
-  pull(all_frogs) %>% unique()

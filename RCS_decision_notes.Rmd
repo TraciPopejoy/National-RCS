@@ -1,18 +1,18 @@
 ---
 title: "RCS decision notes"
 author: "Traci P. DuBose"
-date: "8/7/2020"
+date: "8/24/2020"
 output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(dev = 'jpeg')
-
+knitr::opts_chunk$set(dev='jpeg')
 # Install necessary libraries.
 library(sf); library(tidyverse); library(scales)
+library(cowplot)
 library(ggrepel)
-library(raster); library(Hmisc)
+library(raster)
 ```
 
 ```{r data paths, echo=F}
@@ -22,13 +22,16 @@ PATH_AllAnuran_OccurrenceData<- '/home/tracidubose/RCS_Anuran_input/anuran_occ_a
 PATH_tax_ref <- "/home/tracidubose/RCS_Anuran_input/AnuranTaxRef_20200708.csv"
 PATH_subset_us <-'/home/tracidubose/rcs_results/subsp_range_us/'
 PATH_subset_na <-'/home/tracidubose/rcs_results/subsp_range_na/'
+PATH_hydrosheds<-'/home/tracidubose/HydroSHEDS/'
 
 # load the spatial files
 usa_l48<-readRDS('/home/tracidubose/usal48_nad83_sf.rds')
 huc12_mask<-readRDS('/home/tracidubose/huc12_nad83_sf_mask.rds')
-huc12_crop<-readRDS('/home/tracidubose/huc12_nad83_sf_crop.rds')  %>% 
+huc12_crop<-readRDS('/home/tracidubose/huc12_nad83_sf_crop.rds') 
+huc12_crop<-huc12_crop%>% 
   filter(states!="MX", states!="CN",
-         !(name %in% c("Lake Superior","Lake Erie","Lake Ontario","Lake Huron","Lake Michigan")))
+         !(name %in% c("Lake Superior","Lake Erie","Lake Ontario",
+                       "Lake Huron","Lake Michigan")))
 huc12_raw<-readRDS('/home/tracidubose/huc12_albers_sf.rds')
 
 # set two projections we will use
@@ -57,9 +60,9 @@ ggplot()+
 
 ```
 
-The below map shows the approximate spatial extent of the PRISM ppt raster file, the '07/27 - crop & filter' HUC 12 data
+The below map shows the approximate spatial extent of the PRISM ppt raster file, the '07/27 - crop & filter' HUC 12 data.
 
-```{r mexico huc12 + prism raster plot, echo=F}
+```{r mexico huc12 + prism raster plot, echo=F, fig.width=6, fig.height=3.5}
 ppt_mean_usa<-raster('/home/tracidubose/prism_files/ppt_mean_usa.tif')
 hc12_crop_t<-st_transform(huc12_crop, st_crs(ppt_mean_usa))
 hc12_crop_t_m<-hc12_crop_t %>% filter(grepl("MX", states))
@@ -78,9 +81,8 @@ ggplot()+
            ylim=st_bbox(hc12_crop_t_m[c(3:6),])[c(2,4)])+
   scale_fill_continuous(name="PRISM\nannual ppt")+
   scale_y_continuous("")+scale_x_continuous("")
-
+rm(raster.points, hc12_crop_t, hc12_crop_t_m,ppt_mean_usa)
 ```
-
 ## Percent of Range within Contiguous US
 
 I used the occurrence data to quantify the percentage of all taxa’s range within the lower contiguous US vs the North American continent. The North American continent spatial extent occurred during the filtering/cleaning of occurrence data from GBIF and HerpMapper. 
@@ -96,7 +98,7 @@ per_sp_range <- data.frame(scientific_name = character(),
 tax_reference<-read.csv(PATH_tax_ref)
 anuran.taxa<-unique(tax_reference$final.taxa)
 
-usa_l48_alb<-st_transform(usa_l48, crs=crs.albers)
+usa_l48_alb<-st_transform(x=usa_l48, crs=crs.albers)
 for(i in 1:length(anuran.taxa)){
   geodata<-read.csv(paste0(PATH_FocalSpecies_OccurrenceData, anuran.taxa[i], ".csv")) %>%
     dplyr::select(family, genus, species, Longitude, Latitude, year, source, final.taxa)
@@ -122,7 +124,7 @@ for(i in 1:length(anuran.taxa)){
   d1km_buff_usa <- st_union(st_buffer(dat_sp_usa, dist = 1))
   per_sp_range[i,]$aoo_usal48 <- st_area(d1km_buff_usa)
 }
-
+rm(dat_sp, dat_sp_usa, d1km_buff_usa, dissolved_1km_buffer)
 
 # Calculate the percentage of area within the contiguous US
 per_sp_range <- per_sp_range %>% 
@@ -157,13 +159,14 @@ rmarkdownTable(per_sp_range %>%
   filter(`Percent inside US` < 20)) #7 species removed
 ```
 
-```{r range barely in US plots, echo=F}
+```{r range barely in US plots, echo=F, fig.width=3, fig.height=3, fig.align='center'}
 ggplot()+
   stat_ecdf(data=per_sp_range, aes(x=per_inside_us))+
   scale_y_continuous(name="Proportion species")+
   scale_x_continuous(name="Percent Range within the Contiguous US")+
   theme_bw()+coord_flip()
-
+```
+```{r range barely in US sp, echo=F, fig.width=6, fig.height=4, fig.align='center'}
 per_sp_range_filt <- per_sp_range %>%
   filter(per_inside_us <50)
 ggplot()+
@@ -178,7 +181,7 @@ ggplot()+
 
 ### Example ranges of species with low AOO in Contiguous US  
 
-```{r Smilisca baudinii range, echo=F}
+```{r Smilisca baudinii range, echo=F, fig.height=4, fig.height=4}
 sb_geodata<-read.csv(paste0(PATH_FocalSpecies_OccurrenceData, 
                             "Smilisca baudinii",
                             ".csv")) %>%
@@ -191,11 +194,14 @@ sb_dat_sp_usa<-sb_dat_sp %>%
 ggplot()+geom_sf(data=usa_l48_alb)+
   geom_sf(data=sb_dat_sp, color="blue")+
   geom_sf(data=sb_dat_sp_usa, color="red", alpha=0.3)+
+    coord_sf(xlim=st_bbox(sb_dat_sp)[c(1,3)],
+           ylim=st_bbox(sb_dat_sp)[c(2,4)])+
   ggtitle("Observations of Smilisca baudinii")+theme_bw()
+rm(sb_dat_sp, sb_dat_sp_usa)
 ```
  
 
-```{r dryophytes eximius ex, echo=F}
+```{r dryophytes eximius ex, echo=F, fig.height=4, fig.height=4}
 de_geodata<-read.csv(paste0(PATH_FocalSpecies_OccurrenceData, 
                             "Dryophytes eximius",
                             ".csv")) %>%
@@ -207,227 +213,10 @@ de_dat_sp_usa<-de_dat_sp %>%
 ggplot()+geom_sf(data=usa_l48_alb)+
   geom_sf(data=de_dat_sp, color="blue")+
   geom_sf(data=de_dat_sp_usa, color="red", alpha=0.3)+
+    coord_sf(xlim=st_bbox(de_dat_sp)[c(1,3)],
+           ylim=st_bbox(de_dat_sp)[c(2,4)])+
   ggtitle('Observations of Dryophytes eximius')+theme_bw()
-```
-
-
-```{r Rhinophrynus dorsalis example, echo=F}
-rd_geodata<-read.csv(paste0(PATH_FocalSpecies_OccurrenceData, 
-                            "Rhinophrynus dorsalis",
-                            ".csv")) %>%
-  dplyr::select(family, genus, species, Longitude, Latitude, year, source, final.taxa)
-rd_dat_sp <- st_as_sf(rd_geodata, coords=c("Longitude","Latitude"), crs = crs.geo) #Save spatial dataframe with correct projection.
-rd_dat_sp <- st_transform(rd_dat_sp, crs=crs.albers)
-rd_dat_sp_usa<-rd_dat_sp %>%
-    filter(st_contains(usa_l48_alb, ., sparse = FALSE))
-
-ggplot()+geom_sf(data=usa_l48_alb)+
-  geom_sf(data=rd_dat_sp, color="blue")+
-  geom_sf(data=rd_dat_sp_usa, color="red", alpha=0.3)+
-  coord_sf(xlim=st_bbox(rd_dat_sp)[c(1,3)],
-           ylim=st_bbox(rd_dat_sp)[c(2,4)])+
-  ggtitle('Observations of Rhinophrynus dorsalis')+theme_bw()
-```
-
-# Investigating how RCW components shift based on Spatial Extent
-
-Spatial extent is constrained by the climate data we use when calculating climate niche breadth. There are two main sources of climate data: PRISM and WorldClim. Below is an exploration of the traits of these data sets. 
-
-```{r prism v. worldclim, echo=F, results='asis'}
-rmarkdownTable(
-  tibble(`.`=c('Spatial extent','Spatial resolution','Temporal extent', 'Temporal resolution','Available parameters'),
-    `PRISM`=c('Contiguous U.S.','~4 km2','1895 - 2019','1 value/year','Tmax, Tmin, Tmean, precipitation,  Max Temperature of each month, Min Temperature of each month. Monthly [Tmax, Tmin, precip.]'),
-    `WorldClim Historical Annual`=c('global','~1 km2 to ~342 km2','1970 - 2000','1 value, average of temporal extent','Annual: Mean Temperature, Max Temperature of Warmest Month, Min Temperature of Coldest Month, Annual Precipitation'),
-    `WorldClim Historical Monthly`=c('global','~21 km2','1960 - 2018','1 value/month/year','Tmax, Tmin, precipitation'))
-  )
-```
-
-I will calculate an RCS index using the WorldClim historical climate and PRISM dataset for a subset of taxa that span the RCS and spatial extent continuum. By using PRISM, the climate data represents a larger temporal extent, higher temporal resolution but a smaller spatial extent. PRISM’s spatial extent aligns with the geopolitical boundary for conservation actions). By using WorldClim, the spatial extent and resolution of the data is larger/higher, but there is less temporal resolution and extent. Using WorldClim climate data would allow the climate niche breadth value to represent the entire range of the species. 
-
-I am only using the buffers for comparability. I don't think mexico has equivalent HUC12s. 
-Subset of taxa based on percentage range within US. 
-
-```{r subset of taxa, echo=F, results='asis'}
-anuran.taxa.sub<-c('Dryophytes eximius','Dryophytes wrightorum',
-                   'Rana luteiventris','Lithobates pipiens',
-                   'Lithobates yavapaiensis','Lithobates onca',
-                   'Leptodactylus fragilis','Anaxyrus canorus')
-rmarkdownTable(tibble(`Scientific Name`=anuran.taxa.sub,
-                      `Reason for inclusion`=c('Large range, rare in US',
-                                               'Mid range size, half in US',
-                                               'Large range, half in US',
-                                               'Large range, most in US',
-                                               'Small range, most in US',
-                                               'Small range, all in US',
-                                               'Large range, most not in US',
-                                               'Mid range size, all in US')) %>%
-                 arrange(desc(`Reason for inclusion`)))
-```
-
-```{r calculate AOO at two extents}
-subAOOs <- data.frame(scientific_name = character(), 
-                      aoo_na = numeric(), 
-                      aoo_usal48 = numeric(),
-                      stringsAsFactors = F)
-
-for(i in 1:length(anuran.taxa.sub)){
-  #load the data into geodata
-  geodata<-read.csv(paste0(PATH_FocalSpecies_OccurrenceData, anuran.taxa.sub[i], ".csv")) %>%
-    dplyr::select(family, genus, species, Longitude, Latitude, year, source, final.taxa)
-  
-  # Convert from 'geodata' CSV to a sf object. 
-  dat_sp <- st_as_sf(geodata, coords=c("Longitude","Latitude"), crs = crs.geo) #Save spatial dataframe with correct projection.
-  
-  # Set column 1 in AOOs to species name.
-  subAOOs[i,1] <- as.character(dat_sp$final.taxa[1])
-  
-  # Generate 1km point buffers. You must use a projected CRS for function gBuffer(). For CRS, we use: USA Contiguous albers equal area. 
-  dat_sp <- st_transform(dat_sp, crs.albers) #overwrites to the new projection (save on memory)
-  
-  #this number will be a result of the filtering completed at the occurrence data curation step
-  dissolved_1km_buffer <- st_union(st_buffer(dat_sp, dist = 1))
-  subAOOs[i,]$aoo_na <- st_area(dissolved_1km_buffer)
-  
-  # Filter points that are within the contiguous US, create the buffer, & calculate area
-  dat_sp_usa<-dat_sp %>%
-    filter(st_contains(usa_l48_alb, ., sparse = FALSE))
-  d1km_buff_usa <- st_union(st_buffer(dat_sp_usa, dist = 1))
-  subAOOs[i,]$aoo_usal48 <- st_area(d1km_buff_usa)
-  
-  # Save the spatial dataframes as ESRI Shapefiles. 
-  species <- geodata$final.taxa[1] # Identify the species name for CSV output. 
-  #st_write(d1km_buff_usa, dsn = paste0(PATH_subset_us, species, "_1kmUSA.shp"),
-           #quiet=T)
-  #st_write(dissolved_1km_buffer, dsn = paste0(PATH_subset_na, species, "_1kmNAC.shp"),
-           #quiet=T)
-}
-
-subRCS<-subAOOs %>%
-  mutate(aoo_na_r=rank(aoo_na),
-         aoo_na_scaled=1-((aoo_na-min(aoo_na))/(max(aoo_na)-min(aoo_na))),
-         aoo_us_r=rank(aoo_usal48),
-         aoo_us_scaled=1-((aoo_usal48-min(aoo_usal48))/(max(aoo_usal48)-min(aoo_usal48))))
-```
-
-I exclude Lithobates pipiens from the plot below as it had the largest AOO at both spatial extents.
-
-```{r AOO range results plot, echo=F, fig.width=4, fig.height=4}
-ggplot() + 
-  geom_abline(slope=1, intercept=0)+
-  geom_point(data=subRCS[subRCS$scientific_name!="Lithobates pipiens",], 
-             aes(x=aoo_na_scaled, y=aoo_us_scaled), alpha=0.5)+
-  geom_text_repel(data=subRCS[subRCS$scientific_name!="Lithobates pipiens",],
-                  aes(x=aoo_na_scaled, y=aoo_us_scaled, label=scientific_name),
-                  size=3)+
-  scale_x_continuous("AOO in N American Continent")+
-  scale_y_continuous("AOO in Contiguous US")+
-  theme_bw()
-```
-
-# Extract precipitation data from each species 1km buffer AOO. 
-
-This code is taking forever. Not running it right now. 
-
-```{r evaluating climate niche breadth}
-NW_hemisphere<-extent(-180, -45, 0 ,90) #crop the raster to NW hemisphere
-annual_ppt<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_12.tif")
-annual_ppt<-crop(annual_ppt, NW_hemisphere)
-mean_temp<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_1.tif")
-mean_temp<-crop(mean_temp, NW_hemisphere)
-max_temp_aug<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_5.tif")
-max_temp_aug<-crop(max_temp_aug, NW_hemisphere)
-min_temp_jan<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_6.tif")
-min_temp_jan<-crop(min_temp_jan, NW_hemisphere)
-crs.worldclim<-st_crs(mean_temp)
-
-extract_climate<-function(species, variable){
-  #data frame we want to return
-  CS<-data.frame(scientific_name = rep(species, each=length(variable)),
-                  variable = rep(variable, length(species)),
-                  weighted_mean_na = rep(NA, length(species)*length(variable)),
-                  weighted_sd_na = rep(NA, length(species)*length(variable)),
-                  weighted_mean_us = rep(NA, length(species)*length(variable)),
-                  weighted_sd_us = rep(NA, length(species)*length(variable)),
-                  stringsAsFactors = F)
-  for(g in species){
-      # Read in dissolved shapefiles
-      spp_BUF_na <- st_read(PATH_subset_na, paste0(g,"_1kmNAC"), quiet = T)
-      spp_BUF_na <- st_transform(spp_BUF_na, crs.worldclim)
-      spp_BUF_us <- st_read(PATH_subset_us, paste0(g,"_1kmUSA"), quiet = T)
-      spp_BUF_us <- st_transform(spp_BUF_us, crs.worldclim)
-      for(u in variable){
-        climate_raster<-get(u)
-        # extract variables within the polygon
-        cs_values_na <- raster::extract(climate_raster, spp_BUF_na, weights = TRUE,
-                                     small = TRUE, method = 'simple', df = TRUE) 
-        cs_values_na <- na.omit(cs_values_na)
-        cs_values_us <- raster::extract(climate_raster, spp_BUF_us, weights = TRUE,
-                                     small = TRUE, method = 'simple', df = TRUE) 
-        cs_values_us <- na.omit(cs_values_us)
-        # populate the data frame
-        index<-which(CS$scientific_name==g & CS$variable==u)
-        CS[index,]$weighted_mean_na <- wtd.mean(cs_values_na[,2], cs_values_na[,3], 
-                                               na.rm = TRUE, normwt = TRUE)
-        CS[index,]$weighted_sd_na <-sqrt(wtd.var(cs_values_na[,2], cs_values_na[,3], 
-                                                na.rm = TRUE, normwt = TRUE))
-        CS[index,]$weighted_mean_us <- wtd.mean(cs_values_us[,2], cs_values_us[,3], 
-                                               na.rm = TRUE, normwt = TRUE)
-        CS[index,]$weighted_sd_us <-sqrt(wtd.var(cs_values_us[,2], cs_values_us[,3], 
-                                                na.rm = TRUE, normwt = TRUE))
-        print(g)
-      }
-  }
-  return(CS)
-}
-
-subCS<-extract_climate(anuran.taxa.sub, 
-                       variable=c('annual_ppt', 'mean_temp'))
-
-```
-
-I calculated the AOO and CS at two different spatial extents (and thus, two different climate data sets) for a subset of the Anuran taxa that occur within the US. The grain size for this analysis is currently only 1km buffered points.
-
-```{r scale CS}
-sub_CS_calc<-subCS %>%
-  dplyr::select(scientific_name, variable, weighted_sd_na, weighted_sd_us) %>%
-  pivot_longer(cols=c(weighted_sd_na, weighted_sd_us)) %>%
-  rename(spatial_extent='name', sd_of_env_mean='value') %>%
-  group_by(variable, spatial_extent) %>% 
-  #calculating the index
-  mutate(var_CS_index = (sd_of_env_mean-min(sd_of_env_mean))/ 
-                        (max(sd_of_env_mean)-min(sd_of_env_mean))) %>%
-  dplyr::select(-sd_of_env_mean) %>% # removing the climate sd raw values
-  pivot_wider(names_from='variable',values_from='var_CS_index') %>% #switching from long to wide dataframe
-  rowwise() %>%
-  mutate(buff_CS=mean(c(annual_ppt, mean_temp)),
-         spatial_extent_cat=case_when(grepl('na', spatial_extent)~"North America",
-                                      grepl('us', spatial_extent)~"Lower 48"))
-
-subRCS_fin<-subRCS %>% 
-  dplyr::select(scientific_name, aoo_na_scaled, aoo_us_scaled) %>%
-  pivot_longer(-scientific_name) %>%
-  mutate(spatial_extent_cat=case_when(grepl('na', name)~"North America",
-                                      grepl('us', name)~"Lower 48")) %>%
-  full_join(sub_CS_calc, by=c('scientific_name', 'spatial_extent_cat')) %>%
-  rename(aoo_buff='value') %>%
-  mutate(cs_buff_adj=1-buff_CS,
-         RCS_buff=(aoo_buff+cs_buff_adj)/2) %>%  
-  dplyr::select(scientific_name, spatial_extent_cat, RCS_buff, cs_buff_adj, aoo_buff, buff_CS)
-```
-
-```{r RCS results plot, echo=F, fig.width=4, fig.height=4}
-library(ggrepel)
-subRCS_fin_gdf<-subRCS_fin %>%
-  dplyr::select(scientific_name, spatial_extent_cat, RCS_buff) %>%
-  pivot_wider(names_from = spatial_extent_cat, values_from = RCS_buff)
-ggplot(data=subRCS_fin_gdf, 
-             aes(x=`North America`, y=`Lower 48`)) + 
-  geom_abline(slope=1, intercept=0)+
-  geom_point()+
-  geom_text_repel(aes(label=scientific_name), size=3)+
-  scale_x_continuous("AOO in N American Continent")+
-  scale_y_continuous("AOO in Contiguous US")+
-  theme_bw()
+rm(de_dat_sp, de_dat_sp_usa)
 ```
 
 ## Would I be removing species of conservation concern?  
@@ -467,12 +256,333 @@ rmarkdownTable(check_natcc_taxa %>%
 
 I need to talk to Abby and Meryl about this. Should I also investigate if these species are listed on the ESA (should be a subset if they are already on the national SGCN). 
 
+# Investigating how RCW components shift based on Spatial Extent
+
+Spatial extent is constrained by the climate data we use when calculating climate niche breadth. There are two main sources of climate data: PRISM and WorldClim. Below is an exploration of the traits of these data sets. 
+
+```{r prism v. worldclim, echo=F, results='asis'}
+rmarkdownTable(
+  tibble(`.`=c('Spatial extent','Spatial resolution','Temporal extent', 'Temporal resolution','Available parameters'),
+    `PRISM`=c('Contiguous U.S.','~4 km2','1895 - 2019','1 value/year','Tmax, Tmin, Tmean, precipitation,  Max Temperature of each month, Min Temperature of each month. Monthly [Tmax, Tmin, precip.]'),
+    `WorldClim Historical Annual`=c('global','~1 km2 to ~342 km2','1970 - 2000','1 value, average of temporal extent','Annual: Mean Temperature, Max Temperature of Warmest Month, Min Temperature of Coldest Month, Annual Precipitation'),
+    `WorldClim Historical Monthly`=c('global','~21 km2','1960 - 2018','1 value/month/year','Tmax, Tmin, precipitation'))
+  )
+```
+
+I will calculate an RCS index using the WorldClim historical climate and PRISM dataset for a subset of taxa that span the RCS and spatial extent continuum. By using PRISM, the climate data represents a larger temporal extent, higher temporal resolution but a smaller spatial extent. PRISM’s spatial extent aligns with the geopolitical boundary for conservation actions). By using WorldClim, the spatial extent and resolution of the data is larger/higher, but there is less temporal resolution and extent. Using WorldClim climate data would allow the climate niche breadth value to represent the entire range of the species. 
+
+I am only using the 1 km buffers for comparability. Below we explore the compatability of HydroBASINS datasets, which are international watersheds delineated by elevation, and USGS HUC12s. This represents the subset of taxa I chose to calculate the RCS at the contiguous US extent and the North American continent extent with the WorldClim climate rasters. I will also compare this with the RCS calculated at the contiguous US extent with the PRISM climate raster data.
+
+```{r subset of taxa, echo=F, results='asis'}
+anuran.taxa.sub<-c('Dryophytes eximius','Dryophytes wrightorum',
+                   'Rana luteiventris','Lithobates pipiens',
+                   'Lithobates yavapaiensis','Lithobates onca',
+                   'Leptodactylus fragilis','Anaxyrus canorus',
+                   "Pseudacris nigrita", "Dryophytes chrysoscelis",
+                    "Incilius nebulifer", "Anaxyrus nelsoni",
+                    "Incilius valliceps", "Rana draytonii")
+rmarkdownTable(tibble(`Scientific Name`=anuran.taxa.sub,
+                      `Reason for inclusion`=c('Large range, rare in US',
+                                               'Mid range size, half in US',
+                                               'Large range, half in US',
+                                               'Large range, most in US',
+                                               'Small range, most in US',
+                                               'Small range, all in US',
+                                               'Large range, most not in US',
+                                               'Mid range size, all in US',
+                                               rep('.Random species subsampled', 6))) %>%
+                 arrange(desc(`Reason for inclusion`)))
+```
+
+The below code chunk calculates the area of occupancy at two different spatial extents. It writes out two shapefiles of a single multipolygon that represents the AOO at different spatial extents. 
+
+```{r calculate AOO at two extents}
+subAOOs <- data.frame(scientific_name = character(), 
+                      aoo_na = numeric(), 
+                      aoo_usal48 = numeric(),
+                      stringsAsFactors = F)
+
+for(i in 1:length(anuran.taxa.sub)){
+  #load the data into geodata
+  geodata<-read.csv(paste0(PATH_FocalSpecies_OccurrenceData, anuran.taxa.sub[i], ".csv")) %>%
+    dplyr::select(family, genus, species, Longitude, Latitude, year, source, final.taxa)
+  
+  # Convert from 'geodata' CSV to a sf object. 
+  dat_sp <- st_as_sf(geodata, coords=c("Longitude","Latitude"), crs = crs.geo) #Save spatial dataframe with correct projection.
+  
+  # Set column 1 in AOOs to species name.
+  subAOOs[i,1] <- as.character(dat_sp$final.taxa[1])
+  
+  # Generate 1km point buffers. You must use a projected CRS for function gBuffer(). 
+  #For CRS, we use: USA Contiguous albers equal area. 
+  dat_sp <- st_transform(dat_sp, crs.albers) #overwrites to the new projection (save on memory)
+  
+  #this number will be a result of the filtering completed at the occurrence data curation step
+  dissolved_1km_buffer <- st_union(st_buffer(dat_sp, dist = 1))
+  subAOOs[i,]$aoo_na <- st_area(dissolved_1km_buffer)
+  
+  # Filter points that are within the contiguous US, create the buffer, & calculate area
+  dat_sp_usa<-dat_sp %>%
+    filter(st_contains(usa_l48_alb, ., sparse = FALSE))
+  d1km_buff_usa <- st_union(st_buffer(dat_sp_usa, dist = 1))
+  subAOOs[i,]$aoo_usal48 <- st_area(d1km_buff_usa)
+  
+  # Save the spatial dataframes as ESRI Shapefiles. 
+  species <- geodata$final.taxa[1] # Identify the species name for CSV output. 
+  #st_write(d1km_buff_usa, dsn = paste0(PATH_subset_us, species, "_1kmUSA.shp"),
+  #         quiet=T)
+  #st_write(dissolved_1km_buffer, dsn = paste0(PATH_subset_na, species, "_1kmNAC.shp"),
+  #         quiet=T)
+}
+
+subRCS<-subAOOs %>%
+  mutate(aoo_na_r=rank(aoo_na),
+         aoo_na_scaled=1-((aoo_na-min(aoo_na))/(max(aoo_na)-min(aoo_na))),
+         aoo_us_r=rank(aoo_usal48),
+         aoo_us_scaled=1-((aoo_usal48-min(aoo_usal48))/(max(aoo_usal48)-min(aoo_usal48))))
+```
+
+Below is the AOO for our subset of taxa. The line represents no difference in the scaled AOO between the two spatial extents. If a species is within top left portion of the graph, using the contiguous US spatial extent overestimates the rarity of the species (meaning the AOO is actually larger at the continental spatial extent). Species in the bottom right half of the graph have their rarity underestimated (strictly because the scale is relative and species within the top left alter that scale).  
+
+```{r AOO range results plot, echo=F, fig.width=4, fig.height=4}
+ggplot() + 
+  geom_abline(slope=1, intercept=0)+
+  geom_point(data=subRCS, 
+             aes(x=aoo_na_scaled, y=aoo_us_scaled), alpha=0.5)+
+  geom_text_repel(data=subRCS,
+                  aes(x=aoo_na_scaled, y=aoo_us_scaled, label=scientific_name),
+                  size=3)+
+  scale_x_continuous("AOO in N American Continent")+
+  scale_y_continuous("AOO in Contiguous US")+
+  theme_bw()
+```
+
+# Extract precipitation data from each species 1km buffer AOO. 
+
+The code below is used to extract WorldClim data (~21.5 km2 spatial resolution) at the contiguous US and North American continent spatial extent. We also extract the PRISM climate data (~4 km spatial resolution) at the contiguous US spatial extent. 
+
+```{r evaluating climate niche breadth, eval=FALSE}
+NW_hemisphere<-extent(-180, -45, 0 ,90) #crop the raster to NW hemisphere
+annual_ppt<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_12.tif")
+annual_ppt<-crop(annual_ppt, NW_hemisphere)
+mean_temp<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_1.tif")
+mean_temp<-crop(mean_temp, NW_hemisphere)
+#max_temp_aug<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_5.tif")
+#max_temp_aug<-crop(max_temp_aug, NW_hemisphere)
+#min_temp_jan<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_6.tif")
+#min_temp_jan<-crop(min_temp_jan, NW_hemisphere)
+crs.worldclim<-st_crs(mean_temp)
+
+extract_climate<-function(species, variable){
+  #data frame we want to return
+  CS<-data.frame(scientific_name = rep(species, each=length(variable)),
+                  variable = rep(variable, length(species)),
+                  weighted_mean_na = rep(NA, length(species)*length(variable)),
+                  weighted_sd_na = rep(NA, length(species)*length(variable)),
+                  weighted_mean_us = rep(NA, length(species)*length(variable)),
+                  weighted_sd_us = rep(NA, length(species)*length(variable)),
+                  stringsAsFactors = F)
+  for(g in species){
+      # Read in dissolved shapefiles
+      spp_BUF_na <- st_read(PATH_subset_na, paste0(g,"_1kmNAC"), quiet = T)
+      spp_BUF_na <- st_transform(spp_BUF_na, crs.worldclim)
+      spp_BUF_us <- st_read(PATH_subset_us, paste0(g,"_1kmUSA"), quiet = T)
+      spp_BUF_us <- st_transform(spp_BUF_us, crs.worldclim)
+      for(u in variable){
+        climate_raster<-get(u)
+        # extract variables within the polygon
+        cs_values_na <- raster::extract(climate_raster, spp_BUF_na, weights = TRUE,
+                                     small = TRUE, method = 'simple', df = TRUE) 
+        cs_values_na <- na.omit(cs_values_na)
+        cs_values_us <- raster::extract(climate_raster, spp_BUF_us, weights = TRUE,
+                                     small = TRUE, method = 'simple', df = TRUE) 
+        cs_values_us <- na.omit(cs_values_us)
+        # populate the data frame
+        index<-which(CS$scientific_name==g & CS$variable==u)
+        CS[index,]$weighted_mean_na <- wtd.mean(cs_values_na[,2], cs_values_na[,3], 
+                                               na.rm = TRUE, normwt = TRUE)
+        CS[index,]$weighted_sd_na <-sqrt(wtd.var(cs_values_na[,2], cs_values_na[,3], 
+                                                na.rm = TRUE, normwt = TRUE))
+        CS[index,]$weighted_mean_us <- wtd.mean(cs_values_us[,2], cs_values_us[,3], 
+                                               na.rm = TRUE, normwt = TRUE)
+        CS[index,]$weighted_sd_us <-sqrt(wtd.var(cs_values_us[,2], cs_values_us[,3], 
+                                                na.rm = TRUE, normwt = TRUE))
+        #print(g)
+      }
+  }
+  return(CS)
+}
+
+subCS<-extract_climate(anuran.taxa.sub, 
+                       variable=c('annual_ppt', 'mean_temp'))
+```
+
+Below, I calculate the climate niche breadth and then scale it for comparability among different taxa. 
+
+```{r skipping climate niche quant}
+# WorldClim data at two spatial extents
+subCS<-read.csv('/home/tracidubose/WorldClim_data/Subset_ClimateNiche_Output.csv') %>%
+  dplyr::select(-X)
+sub_CS_calc<-subCS %>%
+  dplyr::select(scientific_name, variable, weighted_sd_na, weighted_sd_us) %>%
+  pivot_longer(cols=c(weighted_sd_na, weighted_sd_us)) %>%
+  rename(spatial_extent='name', sd_of_env_mean='value') %>%
+  group_by(variable, spatial_extent) %>% 
+  #calculating the index
+  mutate(var_CS_index = (sd_of_env_mean-min(sd_of_env_mean))/ 
+                        (max(sd_of_env_mean)-min(sd_of_env_mean))) %>%
+  dplyr::select(-sd_of_env_mean) %>% # removing the climate sd raw values
+  pivot_wider(names_from='variable',values_from='var_CS_index') %>% #switching from long to wide dataframe
+  rowwise() %>%
+  mutate(buff_CS=mean(c(annual_ppt, mean_temp)),
+         spatial_extent_cat=case_when(grepl('na', spatial_extent)~"North America",
+                                      grepl('us', spatial_extent)~"Lower 48"))
+
+# PRISM data at the contiguous US extent
+prismCS<-read.csv('/home/tracidubose/rcs_results/prism_subset_cs.csv') %>%
+  pivot_longer(-species) %>%
+  rename(variable='name', sd_of_env_mean='value') %>%
+  group_by(variable)%>% 
+  #calculating the index
+  mutate(var_CS_index = (sd_of_env_mean-min(sd_of_env_mean))/ 
+                        (max(sd_of_env_mean)-min(sd_of_env_mean)),
+         CS_adj=1-var_CS_index) %>%
+  ungroup()%>%
+  mutate(variable=recode(variable, ppt_sd='annual_ppt', temp_sd='mean_temp'))
+```
+
+```{r plotting climate niche, echo=F}
+worldclim_gdf<-sub_CS_calc %>% 
+  pivot_longer(cols=c(annual_ppt, mean_temp), names_to = 'variable') %>%
+  dplyr::select(species, spatial_extent_cat,variable, value) 
+
+ggplot()+
+  geom_point(data=prismCS, aes(x=species, y=CS_adj, color="PRISM L48"), size=3, alpha=0.6)+
+  geom_point(data=worldclim_gdf[worldclim_gdf$spatial_extent_cat=="North America",],
+             aes(x=scientific_name, y=1-value, color="WorldClim NA"), size=3, alpha=0.6)+
+  geom_point(data=worldclim_gdf[worldclim_gdf$spatial_extent_cat=="Lower 48",],
+             aes(x=scientific_name, y=1-value, color="WorldClim L48"), size=3, alpha=0.6)+
+  scale_color_viridis_d(name="Dataset & Extent")+
+  scale_y_continuous(name='Scaled Climate Niche Breadth')+
+  facet_wrap(~variable)+
+  theme_bw()+
+  theme(axis.text.x=element_text(angle=20, hjust=0.9),
+        legend.position = 'top')+
+  coord_flip()
+```
+
+I calculated the AOO and CS at two different spatial extents using two different climate data sources for a subset of the Anuran taxa that occur within the US. This gives us three different RCS values to calculateThe grain size for this analysis is currently only 1km buffered points.
+
+```{r calculate the RCS for each dataset}
+subRCS_PRISM<-prismCS %>% dplyr::select(species, variable, CS_adj) %>%
+  pivot_wider(names_from='variable', values_from='CS_adj') %>%
+  rowwise() %>%
+  mutate(spatial_extent_cat="Prism Lower 48",
+         buff_CS=mean(c(annual_ppt, mean_temp))) %>% #already adjusted
+  left_join(subRCS, by=c('species'='scientific_name')) %>%
+  rename(scientific_name='species', aoo_buff="aoo_us_scaled") %>%
+  mutate(RCS_buff=(aoo_buff+buff_CS)/2) %>%
+  dplyr::select(scientific_name, RCS_buff, buff_CS, aoo_buff, aoo_usal48, spatial_extent_cat)
+  
+subRCS_WorldClim<-subRCS %>% 
+  dplyr::select(scientific_name, aoo_na_scaled, aoo_us_scaled) %>%
+  pivot_longer(-scientific_name) %>%
+  mutate(spatial_extent_cat=case_when(grepl('na', name)~"North America",
+                                      grepl('us', name)~"Lower 48")) %>%
+  full_join(sub_CS_calc, by=c('scientific_name', 'spatial_extent_cat')) %>%
+  rename(aoo_buff='value') %>%
+  mutate(cs_buff_adj=1-buff_CS,
+         RCS_buff=(aoo_buff+cs_buff_adj)/2) %>%  
+  dplyr::select(scientific_name, spatial_extent_cat, RCS_buff, cs_buff_adj, aoo_buff, buff_CS)
+subRCS_all<-bind_rows(subRCS_PRISM, subRCS_WorldClim)
+```
+
+```{r RCS results plot, echo=F, fig.width=4, fig.height=8, fig.align='center'}
+library(ggrepel)
+subRCS_gdf<-subRCS_all %>%
+  dplyr::select(scientific_name, spatial_extent_cat, RCS_buff) %>%
+  pivot_wider(names_from = spatial_extent_cat, values_from = RCS_buff)
+wc_extent<-ggplot(data=subRCS_gdf, 
+             aes(x=`North America`, y=`Lower 48`)) + 
+  geom_abline(slope=1, intercept=0)+
+  geom_point()+
+  geom_text_repel(aes(label=scientific_name), size=3)+
+  scale_x_continuous("RCS in N American Continent")+
+  scale_y_continuous("RCS in Contiguous US")+
+  ggtitle('Effect of spatial extent')+
+  theme_bw()
+wc_v_p<-ggplot(data=subRCS_gdf, 
+             aes(x=`Prism Lower 48`, y=`Lower 48`)) + 
+  geom_abline(slope=1, intercept=0)+
+  geom_point()+
+  scale_x_continuous("RCS using PRISM")+
+  scale_y_continuous("RCS using WorldClim")+
+  ggtitle('WorldClim vs. PRISM')+
+  theme_bw()
+plot_grid(wc_extent, wc_v_p, ncol=1)
+```
+
+Based on the above graphs, I don't think data set matters too much. But, spatial extent matters a lot. I would argue we should use the entire range of the species to calculate the RCS for this product. The problem occurs that HUC12 don't align well with HydroBasins. 
+
+# How does HydroSHEDS dataset match up with USGS HUCS?
+
+We want to use HUCS because they are a management unit, have ecological significance, and are less sensitive to sample size. But HUCS are not delineated outside major watersheds that flow through the US. This means if we used HUCs to collate occurrences, parts of Mexico and Canada would not have the polygons to capture the occurrences. We could potentially use HydroBASINS, which represent watersheds and sub-watersheds:  <https://hydrosheds.org/page/hydrobasins>. The following code investigates if there is congruence between USGS HUC12s and the HydroBASINS polygons
+
+```{r load a hydrosheds and get kiamichi subset}
+hydro12<-st_read(dsn=PATH_hydrosheds, layer='hybas_na_lev12_v1c', quiet = T)
+
+# Isolating a smaller area for comparison (to save computation time)
+ok_kiamichi<-huc12_crop %>% filter(states=="OK",
+                      substr(huc12, 1,8)==11140105)
+ok_kiamichi_t<-st_transform(ok_kiamichi, st_crs(hydro12))
+
+# identify HydroBASINS that intersect with the Kiamichi HUC12s
+hydro12_kiamichi_int<-st_intersection(ok_kiamichi_t, hydro12)
+hydro12_kiamichi<- hydro12_kiamichi_int %>%
+  pull(HYBAS_ID) %>% unique()
+```
+
+```{r overlap between hydroBasins and usgshucs, echo=F}
+plot_grid(ggplot()+geom_sf(data=hydro12[hydro12$HYBAS_ID %in% hydro12_kiamichi,])+
+            ggtitle('HydroSHED level 11')+theme_bw(),
+  ggplot() + geom_sf(data=ok_kiamichi_t, fill="blue", alpha=0.5)+
+    ggtitle('USGS HUC 12')+theme_bw(),
+  ggplot()+geom_sf(data=hydro12[hydro12$HYBAS_ID %in% hydro12_kiamichi,])+
+    geom_sf(data=ok_kiamichi_t, fill="blue", alpha=0.5)+ggtitle('Combination')+theme_bw(),
+  nrow=1)
+```
+
+How does this translate to when we isolate one HydroBASIN polygon? 
+
+```{r one hydrobasin plot, echo=F, fig.width=5, fig.height=4}
+# specifically looking at one polygon from the HydroShed level 11
+int.hybas<- hydro12_kiamichi_int %>%
+  count(HYBAS_ID) %>%
+  arrange(desc(n)) %>%
+  slice(3) %>% 
+  pull(HYBAS_ID)
+int.hucs<- hydro12_kiamichi_int %>%
+  filter(HYBAS_ID==int.hybas) %>%
+  pull(huc12) %>% unique()
+ggplot() + 
+  geom_sf(data=ok_kiamichi_t[ok_kiamichi_t$huc12 %in% int.hucs, ], alpha=.5, aes(fill='HUC 12'))+
+  geom_sf(data=hydro12[hydro12$HYBAS_ID==int.hybas,], alpha=.5, aes(fill='HydroBASINS')) + 
+  scale_fill_viridis_d(name="Polygon\nDataset")+
+  theme_bw()
+```
+
+The best solution might be to peice the two datasets together - keep HUC12 in the contiguous US while using Hydroshed level 11 throughout the rest of North America. The HUC12s have an average area of `r mean(ok_kiamichi_t$areasqkm)` square kilometers (SD = `r sd(ok_kiamichi_t$areasqkm)`), while the HydroSHED polygons have an average area of `r mean(hydro12[hydro12$HYBAS_ID %in% hydro12_kiamichi,]$SUB_AREA)` square kilometers (SD =  `r sd(hydro12[hydro12$HYBAS_ID %in% hydro12_kiamichi,]$SUB_AREA)`). This would mean that the area outside of the US would be inflated and the CS values would be weighted higher. I don't really like this as it would downweight the US populations which might imply the in those areas, Mexico and Canada have more of a responsibility to conserve those species (because the RCS will be lower). 
+
+```{r removing large files, echo=F}
+rm(ok_kiamichi, ok_kiamichi_t, hydro12_kiamichi)
+```
+
 # The RCS through time is a tricky idea
 
 It is tempting to calculate the RCS at a shorter time span than all available data (typically > 100 years). But since the occurrence data is opportunistically collected, it isn't entirely feasible. Below is the number of observations from our two publically available datasets.
 
 ```{r document tables, echo=F, results='asis'}
-library(lubridate, quietly=F)
+library(lubridate, quietly=T)
 Anurans_df<-read.csv(PATH_AllAnuran_OccurrenceData,
                      stringsAsFactors = F)
 
@@ -526,7 +636,7 @@ rmarkdownTable(year_counts %>% group_by(min,mids, max) %>%
   rename(`Time Period`='mids'))
 
 ```
-```{r time plots}
+```{r time plots, echo=F, fig.width=6, fig.height=4}
 ggplot(data=year_counts[year_counts$n!=0,], 
               aes(x=mids, y=n))+
   geom_jitter(alpha=0.2, width=.2)+
@@ -561,7 +671,7 @@ rmarkdownTable(bind_rows(g_car_hm %>% mutate(Source='HerpMapper'),
           g_car_gbif%>% mutate(Source='GBIF')) %>%
             arrange(desc(n)))
 ```
-```{r g car plot, echo=F}
+```{r g car plot, echo=F, fig.height=4.5, fig.width=4.5}
 ggplot()+
   geom_density(data=g_carolin, aes(x=year, fill="All Records"), stat='count')+
     geom_density(data=g_carolin[g_carolin$Observer=="Ratcliffe, Matthew"& 
