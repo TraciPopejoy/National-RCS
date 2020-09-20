@@ -5,8 +5,8 @@ library(tidyverse)
 
 #paths for data files
 PATH_RCS_index<-'/home/tracidubose/rcs_results/RCS_table_20200726.csv'
-PATH_NatSGCN<-'/home/tracidubose/RCS_Anuran_input/National_SpGCC.csv'
-PATH_FedESA<-'/home/tracidubose/RCS_Anuran_input/FWS_Species_Data_Explorer.csv'
+PATH_NatSGCN<-'data/National_SpGCC.csv'
+PATH_FedESA<-'data/FWS_Species_Data_Explorer.csv'
 
 #load the RCS index results
 RCS_index<-read.csv(PATH_RCS_index)
@@ -19,7 +19,8 @@ anuran_genus<-unique(gsub(";.*","", gsub("\\.", ";", RCS_index$scientific_name))
 # downloaded 05Aug2020
 NatGCC_list<-read.delim(PATH_NatSGCN, 
                         sep="|", header=T, stringsAsFactors = F) %>%
-  dplyr::select(-Taxonomic.Group) %>% #all amphibians
+  filter(Taxonomic.Group=="Amphibians") %>%
+  dplyr::select(-Taxonomic.Group) %>% 
   #renaming columns for ease of use
   rename(scientific_name='Scientific.Name', nStates_2005='X..of.States.2005',
          nStates_2015='X..of.States.2015') %>%
