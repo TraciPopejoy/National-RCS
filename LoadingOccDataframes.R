@@ -63,3 +63,26 @@ for(f in tax_reference$final.taxa){
 write.csv(sp_data, paste0("data/occ_data_used/",
                           f, ".csv"))
 }
+
+# checking A. americanus -----
+US <- map_data("state")#converts state map to dataframe for mapping with ggplot2
+usa <- maps::map("usa") #gets map for subsetting entries. Map of the lower 48 obtained through Package ‘maps’
+#version 3.3.0 (Becker et al. 2018) in Program R (R Core Team 2016);
+main <- map_data("usa", region=c("main"))#subsets map points to only mainland, no islands
+
+df <- data.frame(main$long, main$lat) #dataframe of longitude and latitude 
+usa_l48 <- st_as_sf(df, coords=c("main.long","main.lat"),
+                    crs=st_crs("+init=epsg:4326 +proj=longlat +ellps=WGS84 +datum=WGS84")) %>%
+  st_combine(.) %>%
+  st_cast(., "POLYGON")
+
+Anurans_df %>% filter(final.taxa=='Anaxyrus woodhousii') %>%
+  count(infraspecificEpithet)
+anax<- Anurans_df %>% 
+  filter(final.taxa=='Anaxyrus woodhousii') %>%
+  st_as_sf(crs=st_crs("+proj=longlat +ellps=WGS84 +datum=WGS84"),
+           coords=c("Longitude", "Latitude"))
+ggplot()+geom_sf(data=usa_l48) + 
+  geom_sf(data = anax, aes(color=year), alpha=0.2)+
+  facet_wrap(~infraspecificEpithet)+
+  theme(legend.position = 'top')
