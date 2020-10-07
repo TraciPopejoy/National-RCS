@@ -4,7 +4,7 @@
 library(tidyverse)
 
 #paths for data files
-PATH_RCS_index<-'results/RCS_table_20200920.csv'
+PATH_RCS_index<-'rcs_results/RCS_table_20200928.csv'
 PATH_NatSGCN<-'data/National_SpGCC.csv'
 PATH_FedESA<-'data/FWS_Species_Data_Explorer.csv'
 
@@ -12,7 +12,7 @@ PATH_FedESA<-'data/FWS_Species_Data_Explorer.csv'
 RCS_index<-read.csv(PATH_RCS_index)
 
 #isolate anuran genus for quick pull from Nat SGCN
-anuran_genus<-unique(gsub(";.*","", gsub("\\ ", ";", RCS_index$scientific_name)))
+anuran_genus<-unique(gsub(";.*","", gsub("\\ ", ";", RCS_index$species)))
 
 # Load the lists of species of conservation concern
 # National Species of Greatest Conservation Need - https://www1.usgs.gov/csas/swap/
@@ -52,11 +52,11 @@ esa_anuran_spp <- read.csv(PATH_FedESA, stringsAsFactors = F) %>%
          value %in% anuran_genus) #only keep anuran genus 
 
 # Species Status based on IUCN redlist
-install.packages('rredlist')
+#install.packages('rredlist')
 library(rredlist)
 
 #need an API to use these -- they are free but take days to get
-rredlist::rl_use_iucn() 
+#rredlist::rl_use_iucn() 
 usethis::edit_r_environ()
 
 library(rredlist);library(tidyverse)
@@ -67,7 +67,7 @@ IUCN_anuran<-data.frame(scientific_name=as.character(),
                         stringsAsFactors = F)
 
 for(j in 1:nrow(RCS_index)){
-  taxa<-as.character(gsub('\\.',' ',RCS_index$scientific_name)[j])
+  taxa<-as.character(gsub('\\.',' ',RCS_index$species)[j])
   iucn_res<-rl_search(taxa)[[2]]
   IUCN_anuran[j,]$scientific_name<-taxa
   if(is.null(names(iucn_res))){IUCN_anuran[j,2:4]<-'UNK'
@@ -91,20 +91,18 @@ iucn_cat<-c(UNK='Not listed', LC='Least Concern', NT='Near Threatened', VU='Vuln
 ### RCS & conservation graph ####
 RCS_index_con<-RCS_index %>%
   #only want these two columns
-  dplyr::select(scientific_name, RCS_WS) %>%
-  #cleaning up the scientific name for easy joining
-  mutate(scientific_name=gsub('\\.',' ', scientific_name)) %>%
+  dplyr::select(species, RCS_WS, RCS_buff) %>%
   #adding in the ESA list
-  left_join(esa_anuran_spp, by=c('scientific_name'='sname')) %>%
+  left_join(esa_anuran_spp, by=c('species'='sname')) %>%
   #reordering columns
-  dplyr::select(scientific_name, RCS_WS, ESA.Listing.Status, Entity.Description, ESA.Listing.Date) %>%
+  dplyr::select(species, RCS_WS, RCS_buff, ESA.Listing.Status, Entity.Description, ESA.Listing.Date) %>%
   #adding in the National SGCN list
-  left_join(NatGCC_list, by="scientific_name") %>%
+  left_join(NatGCC_list, by=c('species'="scientific_name")) %>%
   #grouping these into on the list and not on the list
   mutate(NatSGCN=case_when(!is.na(States.2015)~'in >1 SWAP',
                            T~'Not in SWAP')) %>%
   #joining in IUCN data
-  left_join(IUCN_anuran, by='scientific_name') %>%
+  left_join(IUCN_anuran, by=c('species'="scientific_name")) %>%
   #replacing NAs from ESA to Not on ESA
   replace_na(list(ESA.Listing.Status = 'Not on ESA')) %>%
   #reordering factors so they plot in an intuitive order (less concern on left)
@@ -112,47 +110,54 @@ RCS_index_con<-RCS_index %>%
          `Species of Greatest\nConserv. Need`=factor(NatSGCN, levels=c('Not in SWAP', 'in >1 SWAP')),
          `IUCN Red List`=recode_factor(IUCNcategory, !!!iucn_cat)) %>%
   #keeping only the columns I plan to plot
-  dplyr::select(scientific_name, RCS_WS, `Endangered Species Act`,
-                `Species of Greatest\nConserv. Need`, `IUCN Red List`) %>%
-  #adding a column for species with range issues 
-  mutate(RangeIssue=case_when(scientific_name %in% c('Smilisca baudinii','Dryophytes eximius',
-                                                    'Leptodactylus fragilis','Smilisca fodiens',
-                                                    'Rhinophrynus dorsalis','Anaxyrus hemiophrys',
-                                                    'Eleutherodactylus guttilatus')~'range issue',
-                             T~'no range issue'))
+  dplyr::select(species, RCS_WS, RCS_buff, `Endangered Species Act`,
+                `Species of Greatest\nConserv. Need`, `IUCN Red List`)
 str(RCS_index_con)
 
 plot_common_elements<-ggplot(data=RCS_index_con)+
-  scale_color_manual(guide=F, values=c('grey', 'black'))+
-  scale_y_continuous("RCS at HUC12 grain")+
+  scale_y_continuous("Watershed RCS")+
   scale_x_discrete("")+
   theme_bw()+
   theme(axis.text.x = element_text(angle=30, hjust=.9))
 plot_iucn<-plot_common_elements+
-  geom_jitter(aes(x=`IUCN Red List`, y=RCS_WS, color=RangeIssue))+
-  geom_boxplot(aes(x=`IUCN Red List`, y=RCS_WS), alpha=0.3,
+  geom_jitter(aes(x=`IUCN Red List`, y=RCS_WS), color='grey', alpha=0.5)+
+  geom_boxplot(aes(x=`IUCN Red List`, y=RCS_WS), alpha=0.5,
                outlier.alpha = 0)+
   ggtitle('\nIUCN Red List')
 plot_esa<-plot_common_elements+
-  geom_jitter(aes(x=`Endangered Species Act`, y=RCS_WS, color=RangeIssue))+
+  geom_jitter(aes(x=`Endangered Species Act`, y=RCS_WS), color='grey', alpha=0.5)+
   geom_boxplot(aes(x=`Endangered Species Act`, y=RCS_WS), alpha=0.3,
                outlier.alpha = 0)+
   ggtitle('Endangered\nSpecies Act')
 plot_sgcn<-plot_common_elements+
-  geom_jitter(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS, color=RangeIssue))+
+  geom_jitter(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS), color='grey', alpha=0.5)+
   geom_boxplot(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS), alpha=0.3,
                outlier.alpha = 0)+
   ggtitle('Species of Greatest\nConserv. Need')
 
 #plot all in one row
-install.packages('cowplot')
+#install.packages('cowplot')
 library(cowplot)
 plot_grid(plot_esa, plot_sgcn, plot_iucn, nrow=1, 
           rel_widths = c(.8,.8,1))
-ggsave(paste0('results/RCS_con_', format(Sys.Date(),'%Y%m%d'),
+ggsave(paste0('results/RCS_con_WS', format(Sys.Date(),'%Y%m%d'),
               '.jpg'), width=6, height=4)
 
 # RCS & conservation status quantification ----
+# possibilities: 
+# differences in mean RCS between conservation designations - beta reg OR kruskal wallace
+# can RCS predict 
+#beta regression
+library(betareg)
+?betareg
+test<-betareg(formula=RCS_buff~`Species of Greatest\nConserv. Need`,
+        data=RCS_index_con)
+summary(test)
+
+boxplot(formula=RCS_buff~`Species of Greatest\nConserv. Need`,
+         data=RCS_index_con)
+kruskal.test(formula=RCS_buff~`Species of Greatest\nConserv. Need`,
+              data=RCS_index_con)
 
 # isolating sub species identified in SWAP or ESA ----
 subsp.natgcc <- NatGCC_list %>%
