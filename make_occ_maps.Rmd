@@ -1,0 +1,48 @@
+---
+title: "Making Occurrence Maps"
+author: "Traci P. DuBose"
+date: "10/11/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(dev='jpeg')
+library(tidyverse); library(sf); library(maps)
+```
+
+To investigate how many taxa had observations outside of their native range, I downloaded the Anuran range datasets from IUCN. Chloe is using these maps to help subset the native ranges for the Species Distribution Models. 
+
+```{r}
+# Anuran range maps
+iucn_anuran<-read_sf('C:/Users/Owner/Downloads/ANURA', 'ANURA')
+
+# Anuran occurrence data
+crs.geo <- st_crs("+proj=longlat +ellps=WGS84 +datum=WGS84")
+Anurans_sf<-read.csv('data/anuran_occ_all20200708.csv',
+                     stringsAsFactors = F) %>%
+  st_as_sf(coords=c('Longitude','Latitude'), crs=crs.geo) 
+
+# Map of the states in the Contiguous US
+states <- st_as_sf(map("state", plot = FALSE, fill = TRUE))
+```
+Each species should have at least one map. Subspecies are plotted separately, though their RCS is not calculated separately. This was a way to check my subsetting was working correctly and that some taxa are not accidentally mixed (like from museum collections that haven't been updated). The legend refers to a column within the IUCN range maps that describes what that range pertains to.  
+ 
+```{r print the maps, echo=F, warning=F, message=F}
+for(y in unique(Anurans_sf$final.taxa)){
+  sts<-which(st_intersects(states, 
+                      Anurans_sf[Anurans_sf$final.taxa==y,], sparse=F), 
+        arr.ind=T)
+  sp_plot<-ggplot()+
+    geom_sf(data=states[unique(sts[,1]),])+
+    #geom_sf_text(data=states[unique(sts[,1]),], aes(label=ID))+
+    geom_sf(data=Anurans_sf[Anurans_sf$final.taxa==y,], alpha=0.1)+
+    geom_sf(data=iucn_anuran[iucn_anuran$binomial == y,],
+            aes(fill=legend), alpha=0.3)+
+    facet_wrap(~infraspecificEpithet, ncol=2)+
+    scale_fill_viridis_d(option="C")+
+    ggtitle(y)+theme_bw() +
+    theme(legend.position='top')#+coord_sf(xlim=sp_bb[c(1,3)], ylim=sp_bb[c(2,4)])
+  print(sp_plot, width = 6, height=9)
+}
+```
+

@@ -13,6 +13,9 @@ library(sf); library(tidyverse); library(scales)
 library(cowplot)
 library(ggrepel)
 library(raster)
+#install.packages('magick')
+library(magick)
+library(Hmisc, verbose=F, quietly = T)  
 ```
 
 ```{r data paths, echo=F}
@@ -62,7 +65,7 @@ ggplot()+
 
 The below map shows the approximate spatial extent of the PRISM ppt raster file, the '07/27 - crop & filter' HUC 12 data.
 
-```{r mexico huc12 + prism raster plot, echo=F, fig.width=6, fig.height=3.5}
+```{r mexico huc12 prism raster plot, echo=F, fig.width=6, fig.height=3.5}
 ppt_mean_usa<-raster('/home/tracidubose/prism_files/ppt_mean_usa.tif')
 hc12_crop_t<-st_transform(huc12_crop, st_crs(ppt_mean_usa))
 hc12_crop_t_m<-hc12_crop_t %>% filter(grepl("MX", states))
@@ -454,7 +457,7 @@ prismCS<-read.csv('/home/tracidubose/rcs_results/prism_subset_cs.csv') %>%
 ```{r plotting climate niche, echo=F}
 worldclim_gdf<-sub_CS_calc %>% 
   pivot_longer(cols=c(annual_ppt, mean_temp), names_to = 'variable') %>%
-  dplyr::select(species, spatial_extent_cat,variable, value) 
+  dplyr::select(scientific_name, spatial_extent_cat, variable, value) 
 
 ggplot()+
   geom_point(data=prismCS, aes(x=species, y=CS_adj, color="PRISM L48"), size=3, alpha=0.6)+
@@ -708,6 +711,194 @@ rmarkdownTable(Anurans_df_year %>%
 ```
 
 
-# Native vs. Invasive Range 
+# Native vs Entire Range for calculating climate breadth niche
 
-Need to decide if I want to restrict observations to the native range or include the invasive range as well. 
+So we noticed some of the observation for our anurna taxa were well outside the 'native' range of the species. Restricting use to the native range definitely alters the area of occupancy. But, if occurrences only occur in areas the frog can survive, the climate niche breadth shouldn't be altered too much. In the code below I quantify how many points occur outside the native range for that anuran. I also quantify the climate niche breadth on a subset of taxa to evaluate how using the native vs. entire range alters the climate niche breadth.    
+
+```{r count obs in and outside IUCN native range, warnings=FALSE, message=FALSE}
+#loading native ranges from IUCN
+iucn_anuran<-read_sf('/home/tracidubose/ANURA/', 'ANURA')
+#loading all the Anuran observations  
+Anurans_sf<-read.csv(PATH_AllAnuran_OccurrenceData, stringsAsFactors = F) %>%
+  st_as_sf(coords=c('Longitude','Latitude'), crs=crs.geo) 
+#st_crs(iucn_anuran)==st_crs(Anurans_sf)
+
+range_obs<-data.frame(final.taxa=character(),
+                      in_range=numeric(),
+                      out_range=numeric(),
+                      total_obs=numeric())
+for(y in unique(Anurans_sf$final.taxa)){
+  pts_inside<-st_intersects(st_union(iucn_anuran[iucn_anuran$binomial==y,]),
+              Anurans_sf[Anurans_sf$final.taxa==y,], sparse = F)
+  range_obs<-bind_rows(range_obs,
+                       data.frame(final.taxa=y,
+                       in_range=sum(pts_inside),
+                       out_range=length(pts_inside)-sum(pts_inside),
+                       total_obs=nrow(Anurans_sf[Anurans_sf$final.taxa==y,])))
+}
+```
+
+This table reports the taxa with the lowest proportion of observations within their native range.
+
+```{r pts inside native range, echo=F, results='asis'}
+rmarkdownTable(range_obs %>% 
+       mutate(sum_pts=in_range+out_range,
+              per_inside=round((in_range/sum_pts)*100,2)) %>% 
+         arrange(per_inside) %>%
+         rename(Taxa='final.taxa',
+                'Pts in native range'='in_range',
+                'Pts outside native range'='out_range', 
+                'Total Obs.'='total_obs', 
+                'Percent in Native Range'='per_inside') %>%
+         dplyr::select(-sum_pts) %>%
+         slice(3:10))
+#range_obs %>%  mutate(sum_pts=in_range+out_range,
+#              per_inside=round((in_range/sum_pts)*100,2)) %>% 
+#  arrange(per_inside) %>% slice(5:10) %>% pull(final.taxa)
+```
+
+So, I wanted to use a subset of the taxa to investigate how the quantification of the climate niche breadth might shift by using the native range vs. entire range. This subset included the following taxa: `r paste(range_obs %>% arrange(desc(out_range))  %>% slice(4:8) %>% pull(final.taxa), sep=', ')`. I used code from the ARC_Climate Sensitivity_Anurans.R and the *extract_mean_env_buff* function to extract the climate niche breadth of each taxa in their native range using their 1km buffers. 
+
+
+```{r climate niche differences, echo=F}
+clim_values<-NULL
+for(b in list.files('/home/tracidubose/1008_nat_rangeinv/', full.name=T)){
+  ms<-read.csv(b)
+  clim_values<-bind_rows(clim_values, ms)
+}
+
+#clim_values %>% dplyr::select(-X,-ID) %>%
+#  as_tibble() %>% 
+#  pivot_longer(cols = c('ppt','tmin', 'tmax')) %>%
+#  filter(!is.na(value)) %>%
+#  group_by(species, source, name) %>%
+#  dplyr::summarize(sumweight=sum(weight)) #some of them have weights lower than 1 (NA values)
+```
+
+
+```{r, echo=F, warning=FALSE, message=FALSE}
+aoo_nat<-NULL
+iucn_anuran<-st_transform(iucn_anuran, crs.albers)
+for(u in unique(clim_values$species)){
+  sp_data<-Anurans_sf %>% filter(final.taxa == u) %>%
+    st_transform(crs.albers) %>%
+    st_buffer(1) %>% st_union()
+  all_area<-st_area(sp_data)
+  nat_range<-st_intersection(iucn_anuran[iucn_anuran$binomial==u,], sp_data)
+  nat_area<-st_area(st_union(nat_range))
+  aoo_nat<-bind_rows(aoo_nat, 
+                     data.frame(final.taxa=u,
+                                total.area=as.numeric(all_area),
+                                nat.area=as.numeric(nat_area)))
+}
+
+sp_ord <- aoo_nat %>% filter(final.taxa %in% clim_values$species)  %>% 
+  mutate(per=nat.area/total.area) %>%
+  arrange(per) %>%
+  pull(final.taxa)
+
+aoo_nat<-aoo_nat %>% rowwise() %>%
+  mutate(ext.area=total.area-nat.area) %>%
+  pivot_longer(cols=c('nat.area', 'ext.area')) %>%
+  mutate(percent.range=(value/total.area)*100,
+         spFAC=factor(final.taxa, levels=sp_ord))
+```
+
+The code below reads in the results of the extract function and calculates the standard deviation of each climate variable (ppt, minimum temperature, and maximum temperature) for the subset of taxa. 
+
+```{r}
+#reading in area of occupancy in the lower 48 and elsewhere to adjust weights.
+#This means climate values are adjusted based on the area those values occupy.
+aoo_usa<-read.csv('/home/tracidubose/rcs_results/AOOs_raw_202009.csv') %>% 
+  dplyr::select(-X, -DFdif) %>%
+  #only looking at the point buffers
+  filter(area.type %in% c('usa_l48_alb_1km',
+                          'NOTusa_l48_alb_1km')) %>% 
+  group_by(scientific_name) %>%
+  #calculating the proportion that should be represented by prism vs. worldclim values
+  mutate(prop.area=area.sqkm/sum(area.sqkm))
+
+
+buf_climate_sum<-clim_values %>% 
+  dplyr::select(-X,-ID) %>%
+  as_tibble() %>% 
+  pivot_longer(cols = c('ppt','tmin', 'tmax')) %>%
+  filter(!is.na(value)) %>%
+  group_by(species, source, name) %>%
+  #creating this column to join it with the aoo_usa dataframe
+  mutate(area.type=case_when(source=='prism'~'usa_l48_alb_1km',
+                             source!='prism'~'NOTusa_l48_alb_1km')) %>%
+  left_join(aoo_usa, by=c('species'='scientific_name', 'area.type')) %>%
+  #creates the new weights that will sum to 1 (other than NA cells)
+  mutate(new.weight=weight*prop.area) %>%
+  group_by(species, name) %>%
+  # this code calculates the weighted mean and the weighted sd value 
+  # weights are from areas. 
+  dplyr::summarize(mean_value=wtd.mean(value, new.weight, na.rm = TRUE, normwt = TRUE),
+                   sd_value=sqrt(wtd.var(value, new.weight, na.rm = TRUE, normwt = TRUE)),
+                   sumweight=sum(new.weight))
+
+climate_niche<-buf_climate_sum %>%
+  # join in previously calculated entire range climate niche breadth values
+  left_join(read.csv('/home/tracidubose/rcs_results/watershed_climate_means/range.wide.weighted.CS_20200929.csv') %>%
+              # Entire Range == ER
+              rename('ER_mean_value'='mean_value', 
+                     'ER_sd_value'='sd_value'),
+            by=c('species','name')) %>%
+  dplyr::select(-X, -sumweight) %>%
+  pivot_longer(cols = c(mean_value, ER_mean_value,
+                        sd_value, ER_sd_value), 
+               names_to = 'mean_type', 
+               values_to = 'value') %>%
+  # order species based on highest proportion within native range
+  mutate(spFAC=factor(species, levels=sp_ord))
+
+CS_total<-climate_niche %>%
+  filter(grepl('sd_value', mean_type)) %>%
+  group_by(name, mean_type) %>%
+  mutate(CS_value=(value-min(value))/ #calculating the index
+           (max(value)-min(value))) %>%
+  group_by(spFAC,species, mean_type) %>%
+  dplyr::summarize(CS=mean(CS_value))
+```
+
+```{r sd btwn nat ext range, echo=F}
+sd.plot<-ggplot()+geom_point(data=climate_niche[climate_niche$mean_type %in% c('sd_value', 'ER_sd_value'),],
+                    aes(x=value, y=spFAC, color=mean_type), alpha=0.5, size=2)+
+  facet_wrap(~name, scales='free_x')+
+  scale_y_discrete('') +
+  scale_x_continuous('sd of climate')+
+  scale_color_viridis_d('', labels=c('entire range','natural range'), end=.8)+
+  theme_bw()+theme(legend.position = 'top',
+                        axis.text.y = element_text(face='italic', size=8),
+                        axis.text.x= element_text(angle = 20, size=8))+
+  guides(color=guide_legend(override.aes=list(alpha=1)))
+CS.plot<-ggplot()+
+  geom_point(data=CS_total, aes(x=1-CS, y=spFAC, color=mean_type), alpha=0.5)+
+  facet_wrap(~'CS Value')+
+  scale_y_discrete('') +
+  scale_color_viridis_d('', labels=c('entire range','natural range'), end=.8)+
+  theme_cowplot()+ theme(strip.background = element_rect(fill=NA),
+                        axis.title.y=element_text(size=-1),
+                        axis.text.y = element_text(size=-1),
+                        legend.position = 'none',
+                        axis.text.x = element_text(angle=20, size=8),
+                        axis.title.x=element_text(size=1.5))
+  
+per.nat.plot<-ggplot()+geom_col(data=aoo_nat[aoo_nat$name=='nat.area',], aes(x=percent.range/100, y=spFAC))+
+  facet_wrap(~'Natural Range')+
+  scale_y_discrete('')+
+  scale_x_continuous('', labels = scales::percent)+
+  theme_cowplot()+theme(strip.background = element_rect(fill=NA),
+                        axis.title.y=element_text(size=-1),
+                        axis.text.y = element_text(size=-1),
+                        axis.text.x = element_text(angle=20, size=8),
+                        axis.title.x=element_text(size=1.5))
+legend <- get_legend(sd.plot)
+plot_grid(legend, plot_grid(sd.plot+theme(legend.position='none'),
+                            CS.plot, per.nat.plot, rel_widths = c(1, .3,.3), nrow=1), 
+          ncol=1, rel_heights=c(.1, 1))
+ggsave('/home/tracidubose/rcs_results/sd_btwn_natExt_range.jpg',
+       width=7, height=3.5)
+```
+
