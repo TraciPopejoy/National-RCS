@@ -17,9 +17,18 @@ climate_buf <- read.csv('rcs_results/range.wide.weighted.CS_20200929.csv')
 #identify taxa we are excluding because only 20% of their range?
 # dataframe created from code within RCS_decision_notes.Rmd
 sp_range_wiL48 <-read.csv('rcs_results/sp_range_within_US.csv') %>% dplyr::select(-X)
+NAS_nativetrans<-c('Acris crepitans', 'Anaxyrus boreaus',
+                   'Dryophytes cinereus', 'Dryophytes gratiosus',
+                   'Dryophytes squirellus', 'Dryophytes wrightorum',
+                   'Eleutherodactylus cystignathoides','Lithobates berlandieri',
+                   'Lithobates blairi','Lithobates catesbeianus',
+                   'Lithobates clamitans','Lithobates grylio',
+                   'Lithobates pipiens','Lithobates sphenocephalus',
+                   'Pseudacris regilla','Rana aurora',
+                   'Rhinella marina',)
+NAS_exotic<-c('Osteopilus septentrionalis','Xenopus laevis')
 sp_exclude <- sp_range_wiL48 %>% filter(per_inside_us <= .200) %>%
-  pull(scientific_name)
-
+  pull(scientific_name) %>% c(NAS_exotic)
 # Scale standard deviations for each climatic variable and grain (n=2) between 0 and 1. ###
 # Watershed grain size - climate
 watershed_CS<-climate_ws_raw %>%
@@ -77,7 +86,7 @@ RCS_Data <- AOOs_index %>%
          RCS_WS = (AOO_WS_adj + CS_WS_adj)/2,
          RCS_buff = (AOO_BUF_adj + CS_BUF_adj)/2,
   #create a factor for ordering plots
-         SpFac=factor(species, levels = species[order(RCS_buff)]))
+         SpFac=factor(species, levels = species[order(RCS_WS)]))
 
 # Exports RCS data table.
 write.csv(RCS_Data, file = paste0("rcs_results/RCS_table_", format(Sys.Date(), "%Y%m%d"),".csv"))
@@ -86,30 +95,74 @@ write.csv(RCS_Data, file = paste0("rcs_results/RCS_table_", format(Sys.Date(), "
 # converting dot plot to ggplot
 library(ggplot2); library(cowplot); library(scales)
 
+source('RCS_Conserv_Status.R') #identifies which taxa are on conservation lists
+source('investigating statistical options.R') #builds the rcs dataframe
+con_plot_df<-rcs %>% dplyr::select(species, RCS_buff,
+                                   ESA_bin, State_bin, Int_bin) %>%
+  rowwise() %>%
+  mutate(connum=sum(ESA_bin, State_bin, Int_bin)) %>%
+  left_join(RCS_Data %>% dplyr::select(species, SpFac),
+            by='species') %>%
+  arrange(RCS_buff) %>% ungroup() %>%
+  filter(!duplicated(.))
+
 # RCS Dotplot code
 RCS_Data %>%
   dplyr::select(SpFac, RCS_WS, RCS_buff) %>%
   pivot_longer(-SpFac) %>% 
   mutate(grain.size=recode(name, RCS_buff='1km Buffers',
                            RCS_WS='Watersheds'),
-         filt.rank=as.numeric(SpFac))%>%
-  #filter(filt.rank > 52) %>%
+         filt.rank=as.numeric(SpFac),
+         box.min=ifelse(filt.rank > 49, 1.01, .85),
+         box.max=ifelse(filt.rank > 49, 1.03, .899),
+         boy.min=ifelse(filt.rank > 49, filt.rank-0.4-49, filt.rank-0.4),
+         boy.max=ifelse(filt.rank > 49, filt.rank+0.4-49, filt.rank+0.4),
+         facet.group=factor(case_when(filt.rank > 49~'vulnerable',
+                               T~'not as vulnerable'),
+                               levels=c('vulnerable','not as vulnerable'))) %>%
+  left_join(con_plot_df) %>%
+  #group_by(facet.group)%>% summarize(max(value))
   ggplot()+
-  geom_point(aes(x=value, y=SpFac))+
-  scale_x_reverse(name="RCS Index")+
+  geom_rect(aes(fill=as.factor(connum), xmin=box.min, xmax=box.max, 
+                ymin=boy.min, ymax=boy.max))+
+  geom_point(aes(x=value, y=SpFac,
+                 shape=grain.size), size=2, alpha=0.6)+
+  scale_shape_manual('Grain Size', values=c(16,0))+
+  scale_fill_manual('# Conservation Lists',
+                    values=c("black","#440154FF","#2A788EFF","#7AD151FF"))+
+  scale_x_reverse(name="RCS Index", expand=c(0,0), 
+                  breaks=c(0, .25, .5, .7, .8, .9, 1))+
   scale_y_discrete(name="")+
   theme_cowplot()  +
-  facet_wrap(~grain.size) +
+  facet_wrap(~facet.group, scales = 'free') +
   theme(panel.grid.major.y = element_line(color="lightgrey"),
         axis.text.y = element_text(size=8, face='italic'),
         axis.title.y=element_text(size=-1),
-        axis.text.x = element_text(size=10),
-        axis.title.x = element_text(size=11),
+        axis.text.x = element_text(size=10, angle=30, hjust=.9),
+        axis.title.x = element_text(size=10),
         strip.background = element_rect(fill=NA),
-        strip.text=element_text(size=11))
+        strip.text=element_text(size=11),
+        legend.position='bottom',
+        legend.box="vertical",
+        legend.title = element_text(size=12))
 
 ggsave(paste0('rcs_results/figures/RCS_jpg_new_', 
-              format(Sys.Date(), '%Y%m%d'),'.jpg'), width=6, height=9)
+              format(Sys.Date(), '%Y%m%d'),'.jpg'), width=6, height=7)
+
+count_rcs<-RCS_Data %>%
+  left_join(read.csv('data/anuran_occ_all20200708.csv', stringsAsFactors = F) %>%
+              count(final.taxa),
+            by=c('species'='final.taxa')) %>%
+  dplyr::select(SpFac, RCS_WS, RCS_buff, n) %>%
+  pivot_longer(cols = c('RCS_WS', 'RCS_buff'))
+ 
+ggplot(data=count_rcs)+
+  geom_point(aes(x=value, y=n))+
+  scale_y_log10()+
+  geom_smooth(aes(x=value, y=n), method='lm')+
+  facet_wrap(~name)
+
+summary(lm(value~n+name, data=count_rcs))
 
 ggplot()+
   geom_point(data=RCS_Data, 
@@ -118,7 +171,7 @@ ggplot()+
              aes(x=log10_buff_sqkm, y=SpFac, shape="1km Buffer"), size=2)+
   scale_x_continuous(name="log(Area of Occurrence)")+
   scale_y_discrete(name="")+
-  scale_shape_discrete(name='Grain Size')+
+  scale_shape_manual('Grain Size', values=c(16,0))+
   theme_cowplot()+
   theme(panel.grid.major.y = element_line(color="lightgrey"),
         axis.text.y = element_text(size=10, face='italic'),
@@ -157,62 +210,6 @@ RCS_Data %>%
   facet_wrap(~grain.size)
 ggsave(paste0('rcs_results/figures/CS_plot_jpg_',
               format(Sys.Date(), '%Y%m%d'),'.jpg'), width=7, height=9.5)
-
-
-### investigating difference between buffer and watershed rank rcs ----
-names(RCS_Data)
-big_sp_shifts_area<- RCS_Data %>%
-  summarize(species=species,
-            ws_cs_r = rank(WS_CS),
-         bf_cs_r = rank(buff_CS),
-         aoo_rank_dif = rank_WS-rank_buff,
-         cs_rank_dif = ws_cs_r-bf_cs_r) %>%
-  as_tibble() %>%
-  arrange(aoo_rank_dif) %>%
-  #left_join(sp_range_wiL48 %>%
-  #            dplyr::select(scientific_name, per_inside_us), 
-  #          by=c('species'='scientific_name')) %>%
-  filter(aoo_rank_dif > 9 | aoo_rank_dif < -9 ) %>% pull(species)
-big_sp_shifts_cs<-RCS_Data %>%
-  summarize(species=species,
-            ws_cs_r = rank(WS_CS),
-            bf_cs_r = rank(buff_CS),
-            aoo_rank_dif = rank_WS-rank_buff,
-            cs_rank_dif = ws_cs_r-bf_cs_r) %>%
-  as_tibble() %>%
-  arrange(aoo_rank_dif) %>%
-  #left_join(sp_range_wiL48 %>%
-  #            dplyr::select(scientific_name, per_inside_us), 
-  #          by=c('species'='scientific_name')) %>%
-  #ggplot()+geom_histogram(aes(x=cs_rank_dif))
-  filter(cs_rank_dif > 20 | cs_rank_dif < -20 ) %>% pull(species)
-RCS_Data %>%
-  summarize(species=species,
-         r_rcs_ws=rank(RCS_WS),
-         r_rcs_bf=rank(RCS_buff),
-         RCS_dif=r_rcs_ws-r_rcs_bf,
-            ws_cs_r = rank(WS_CS),
-            bf_cs_r = rank(buff_CS),
-            grain_dif = ws_cs_r - bf_cs_r,
-            aoo_rank_dif = rank_WS-rank_buff,
-            cs_rank_dif = ws_cs_r-bf_cs_r) %>%
-  as_tibble() %>% dplyr::select(species, ws_cs_r, bf_cs_r, cs_rank_dif)
-#  filter(species %in% unique(c(big_sp_shifts_cs, big_sp_shifts_area))) %>%
-
- %>%
-  summarize(mean(abs(r_rcs_ws-r_rcs_bf)),
-            range(r_rcs_ws-r_rcs_bf),
-            mean(abs(aoo_rank_dif)),
-            range(aoo_rank_dif),
-            mean(abs(cs_rank_dif)),
-            range(cs_rank_dif))
-
-
-RCS_Data %>% dplyr::select(species, RCS_WS, RCS_buff) %>% 
-  mutate(rank.ws=rank(RCS_WS),
-         rank.buff=rank(RCS_buff),
-         difff=rank.ws-rank.buff) %>%
-  slice(1:7)
 
 climate_raw_values<-bind_rows(climate_buf %>% mutate(grain.size="BUFF"),
                               climate_ws_raw %>% group_by(species, value_type) %>%
