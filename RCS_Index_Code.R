@@ -96,20 +96,24 @@ write.csv(RCS_Data, file = paste0("rcs_results/RCS_table_", format(Sys.Date(), "
 library(ggplot2); library(cowplot); library(scales)
 
 source('RCS_Conserv_Status.R') #identifies which taxa are on conservation lists
-source('investigating statistical options.R') #builds the rcs dataframe
-con_plot_df<-rcs %>% dplyr::select(species, RCS_buff,
-                                   ESA_bin, State_bin, Int_bin) %>%
-  rowwise() %>%
-  mutate(connum=sum(ESA_bin, State_bin, Int_bin)) %>%
-  left_join(RCS_Data %>% dplyr::select(species, SpFac),
-            by='species') %>%
-  arrange(RCS_buff) %>% ungroup() %>%
-  filter(!duplicated(.))
+con_plot_df<-RCS_index_con %>%
+  mutate(esa=ifelse(`Endangered Species Act`=='Not on ESA', '0', 'ESA'),
+         swap=ifelse(`Species of Greatest\nConserv. Need`=='Not in SWAP', '0','SWAP'),
+         iucn=ifelse(`IUCN Red List` %in% c('Not listed', 'Least Concern', 'Near Threatened'), '0','IUCN'),
+         conlists=paste0(esa, swap, iucn)) %>%
+  dplyr::select(species, esa, swap, iucn, conlists) %>%
+  mutate(Lissst = case_when(conlists=='ESASWAPIUCN'~'All 3',
+                                  conlists=="0SWAPIUCN"~'IUCN & SWAP',
+                                  conlists=="000"~"None",
+                                  T~gsub('0','', conlists)),
+         `Listed on:` = factor(Lissst, levels=c("IUCN & SWAP", "SWAP", "IUCN",
+                                               "All 3", "None")))
 
+unique(con_plot_df$`Listed on:`)
 # RCS Dotplot code
 RCS_Data %>%
-  dplyr::select(SpFac, RCS_WS, RCS_buff) %>%
-  pivot_longer(-SpFac) %>% 
+  dplyr::select(species, SpFac, RCS_WS, RCS_buff) %>%
+  pivot_longer(cols=c('RCS_WS','RCS_buff')) %>% 
   mutate(grain.size=recode(name, RCS_buff='1km Buffers',
                            RCS_WS='Watersheds'),
          filt.rank=as.numeric(SpFac),
@@ -121,15 +125,16 @@ RCS_Data %>%
                                T~'not as vulnerable'),
                                levels=c('vulnerable','not as vulnerable'))) %>%
   left_join(con_plot_df) %>%
+  filter(!duplicated(.)) %>%
   #group_by(facet.group)%>% summarize(max(value))
   ggplot()+
-  geom_rect(aes(fill=as.factor(connum), xmin=box.min, xmax=box.max, 
+  geom_rect(aes(fill=`Listed on:`, xmin=box.min, xmax=box.max, 
                 ymin=boy.min, ymax=boy.max))+
   geom_point(aes(x=value, y=SpFac,
                  shape=grain.size), size=2, alpha=0.6)+
   scale_shape_manual('Grain Size', values=c(16,0))+
-  scale_fill_manual('# Conservation Lists',
-                    values=c("black","#440154FF","#2A788EFF","#7AD151FF"))+
+  scale_fill_manual(values=c("#FCA50AFF", "#DD513AFF", "#FCFFA4FF",
+                             "#932667FF",'grey'))+
   scale_x_reverse(name="RCS Index", expand=c(0,0), 
                   breaks=c(0, .25, .5, .7, .8, .9, 1))+
   scale_y_discrete(name="")+
@@ -144,7 +149,8 @@ RCS_Data %>%
         strip.text=element_text(size=11),
         legend.position='bottom',
         legend.box="vertical",
-        legend.title = element_text(size=12))
+        legend.title = element_text(size=12))+
+  guides(fill=guide_legend(nrow=2))
 
 ggsave(paste0('rcs_results/figures/RCS_jpg_new_', 
               format(Sys.Date(), '%Y%m%d'),'.jpg'), width=6, height=7)
@@ -164,50 +170,106 @@ ggplot(data=count_rcs)+
 
 summary(lm(value~n+name, data=count_rcs))
 
-ggplot()+
-  geom_point(data=RCS_Data, 
-             aes(x=log10_WS_sqkm, y=SpFac, shape="Watershed"), size=2)+
-  geom_point(data=RCS_Data, 
-             aes(x=log10_buff_sqkm, y=SpFac, shape="1km Buffer"), size=2)+
-  scale_x_continuous(name="log(Area of Occurrence)")+
+RCS_Data %>% 
+  dplyr::select(species, log10_buff_sqkm, log10_WS_sqkm, 
+                WS_AOO_ind, buff_AOO_ind) %>%
+  mutate(WS = (log10_WS_sqkm - min(log10_WS_sqkm))/
+           (max(log10_WS_sqkm) - min(log10_WS_sqkm)),
+         buff = (log10_buff_sqkm - min(log10_buff_sqkm))/
+           (max(log10_buff_sqkm) - min(log10_buff_sqkm))) %>%
+  dplyr::select(species, WS_AOO_ind, buff_AOO_ind, WS, buff) %>%
+  pivot_longer(-species) %>%
+  mutate(grain.size=case_when(grepl('WS', name)~'watershed',
+                              T~'buffer')) %>%
+  ggplot()+
+  geom_density(aes(x=value, fill=name), alpha=0.5) +
+  facet_wrap(~grain.size)
+
+RCS_Data %>% 
+  dplyr::select(species, log10_buff_sqkm, log10_WS_sqkm, 
+                WS_AOO_ind, buff_AOO_ind) %>%
+  mutate(WS = (log10_WS_sqkm - min(log10_WS_sqkm))/
+           (max(log10_WS_sqkm) - min(log10_WS_sqkm)),
+         buff = (log10_buff_sqkm - min(log10_buff_sqkm))/
+           (max(log10_buff_sqkm) - min(log10_buff_sqkm))) %>%
+  dplyr::select(species, WS_AOO_ind, buff_AOO_ind, WS, buff) %>%
+  ggplot()+
+  geom_point(aes(x=WS_AOO_ind, y=1, color='watershed'), alpha=0.5) +
+  geom_point(aes(x=buff_AOO_ind, y=2, color='buff'), alpha=0.5) +
+  geom_point(aes(x=WS, y=3, color='watershed'), alpha=0.5) +
+  geom_point(aes(x=buff, y=4, color='buff'), alpha=0.5) +
+  scale_color_viridis_d()
+
+RCS_Data %>%
+  pivot_longer(cols=c("WS_AOO_ind","buff_AOO_ind")) %>%
+  ggplot()+geom_density(aes(value, fill=name))
+
+RCS_Data %>% 
+  select(SpFac, species, watershed, buffer) %>%
+  mutate(filt.rank=as.numeric(SpFac),
+         boy.min=filt.rank-0.4,
+         boy.max=filt.rank+0.4) %>%
+  left_join(con_plot_df) %>%
+  filter(!duplicated(.))%>% 
+  ggplot() +
+  geom_rect(aes(fill=`Listed on:`, xmin=6, xmax=10, 
+                ymin=boy.min, ymax=boy.max))+
+  geom_point(aes(x=watershed, y=SpFac, shape="Watershed"), size=2)+
+  geom_point(aes(x=buffer, y=SpFac, shape="1km Buffer"), size=2)+
+  scale_x_log10(name=expression("Area of Occurrence km"^2), expand=c(0,0))+
   scale_y_discrete(name="")+
   scale_shape_manual('Grain Size', values=c(16,0))+
+  scale_fill_manual(values=c("#FCA50AFF", "#DD513AFF", "#FCFFA4FF",
+                             "#932667FF",'grey'))+
   theme_cowplot()+
   theme(panel.grid.major.y = element_line(color="lightgrey"),
-        axis.text.y = element_text(size=10, face='italic'),
-        axis.title.x = element_text(size=15),
-        legend.position = 'top')
+        axis.text.y = element_text(size=8, face='italic'),
+        axis.text.x = element_text(size=9, angle=20))
+
 ggsave(paste0('rcs_results/figures/area_plot_jpg_',
               format(Sys.Date(), '%Y%m%d'),'.jpg'), width=6, height=9.5)
 
+# Climate Niche Breadth Plot
 RCS_Data %>% 
-  select(SpFac, ends_with("CS")) %>%
+  select(SpFac, species, ends_with("CS")) %>%
   pivot_longer(cols=c("ppt_WS.CS", 'tmax_WS.CS','tmin_WS.CS',
                       'ppt_buf.CS','tmax_buf.CS','tmin_buf.CS')) %>%
   mutate(grain.size=case_when(grepl('WS', name)~'watershed',
                               grepl('buf',name)~'buffer'),
          c.var=gsub('_.*','', name)) %>%
-  ggplot()+
-  geom_point(aes(x=value, y=SpFac,color=c.var, shape=c.var), alpha=0.7)+
+  mutate(filt.rank=as.numeric(SpFac),
+         boy.min=filt.rank-0.4,
+         boy.max=filt.rank+0.4) %>%
+  left_join(con_plot_df) %>%
+  filter(!duplicated(.))%>% 
+  ggplot() +
+  geom_rect(aes(fill=`Listed on:`, xmin=-.05, xmax=.00, 
+                ymin=boy.min, ymax=boy.max))+
+  geom_point(aes(x=value, y=SpFac, color=c.var, shape=c.var), alpha=0.4)+
   geom_point(data=RCS_Data %>% mutate(grain.size='watershed'),
              aes(x=WS_CS, y=SpFac, color='mean', shape='mean'), size=2)+
   geom_point(data=RCS_Data %>% mutate(grain.size='buffer'),
              aes(x=buff_CS, y=SpFac, color='mean', shape='mean'),  size=2)+
-  scale_x_continuous(name="Climate Breadth Index")+
+  scale_x_continuous(name="Climate Breadth Index",
+                     expand=c(0,0),
+                     labels=c('0','0.25','0.5','0.75','1'))+
   scale_y_discrete(name="")+
   scale_color_manual(name="Climate\nVariable",
-                     values = c('black', viridis_pal()(3)),)+
+                     values = c('black', viridis::viridis_pal()(3)),)+
   scale_shape_manual(name="Climate\nVariable",
                      values=c(8,16,17,15))+
+    scale_fill_manual(values=c("#FCA50AFF", "#DD513AFF", "#FCFFA4FF",
+                             "#932667FF",'grey'))+
   theme_cowplot()+
   theme(panel.grid.major.y = element_line(color="lightgrey"),
         axis.text.y = element_text(size=8, face='italic'),
         axis.title.y=element_text(size=-1),
-        axis.text.x = element_text(size=10),
+        axis.text.x = element_text(size=9),
         axis.title.x = element_text(size=11),
         strip.background = element_rect(fill=NA),
         strip.text=element_text(size=11))+
   facet_wrap(~grain.size)
+
 ggsave(paste0('rcs_results/figures/CS_plot_jpg_',
               format(Sys.Date(), '%Y%m%d'),'.jpg'), width=7, height=9.5)
 
@@ -223,4 +285,6 @@ climate_raw_values<-bind_rows(climate_buf %>% mutate(grain.size="BUFF"),
 
 ggplot(climate_raw_values)+
   geom_density(aes(x=sd_value, fill=grain.size), alpha=.4)+
-  facet_wrap(~climate_var, scales="free")
+  facet_wrap(~climate_var, scales="free")+
+  scale_fill_manual(values=c('black','white'))+
+  theme_cowplot()
