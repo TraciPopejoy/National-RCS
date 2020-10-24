@@ -4,7 +4,8 @@
 library(tidyverse)
 
 #paths for data files
-PATH_RCS_index<-'rcs_results/RCS_table_20201012.csv'
+PATH_RCS_index<-'rcs_results/RCS_table_20201024.csv'
+PATH_RCS_L48_index <-'rcs_results/RCS_table_L48_20201024.csv'
 PATH_NatSGCN<-'data/National_SpGCC.csv'
 PATH_FedESA<-'data/FWS_Species_Data_Explorer.csv'
 
@@ -49,7 +50,8 @@ esa_anuran_spp <- read.csv(PATH_FedESA, stringsAsFactors = F) %>%
   pivot_longer(cols=starts_with('n')) %>%
   filter(!is.na(value),
          name=='n1', #should be the genus for each taxa
-         value %in% anuran_genus) #only keep anuran genus 
+         value %in% anuran_genus) %>% #only keep anuran genus 
+  mutate(sname=recode(sname, 'Rana chiricahuensis'='Lithobates chiricahuensis'))
 
 # Species Status based on IUCN redlist
 #install.packages('rredlist')
@@ -88,13 +90,13 @@ iucn_cat<-c(UNK='Not listed', LC='Least Concern', NT='Near Threatened', VU='Vuln
   EN='Endangered', CR='Critically Endangered', EW='Extinct in the wild', EX ='Extinct')
 
 ### RCS & conservation graph dataframe ####
-RCS_index_con<-RCS_index %>%
-  #only want these two columns
-  dplyr::select(species, RCS_WS, RCS_buff) %>%
+RCS_index_con<-RCS_Data %>%
+  bind_rows(RCS_Data_L48) %>% 
+  dplyr::select(species, spatial_extent, RCS_WS, RCS_buff) %>% #only want these columns
   #adding in the ESA list
   left_join(esa_anuran_spp, by=c('species'='sname')) %>%
   #reordering columns
-  dplyr::select(species, RCS_WS, RCS_buff, ESA.Listing.Status, Entity.Description, ESA.Listing.Date) %>%
+  dplyr::select(species, spatial_extent, RCS_WS, RCS_buff, ESA.Listing.Status, Entity.Description, ESA.Listing.Date) %>%
   #adding in the National SGCN list
   left_join(NatGCC_list, by=c('species'="scientific_name")) %>%
   #grouping these into on the list and not on the list
@@ -109,43 +111,100 @@ RCS_index_con<-RCS_index %>%
          `Species of Greatest\nConserv. Need`=factor(NatSGCN, levels=c('Not in SWAP', 'in >1 SWAP')),
          `IUCN Red List`=recode_factor(IUCNcategory, !!!iucn_cat)) %>%
   #keeping only the columns I plan to plot
-  dplyr::select(species, RCS_WS, RCS_buff, `Endangered Species Act`,
-                `Species of Greatest\nConserv. Need`, `IUCN Red List`)
+  dplyr::select(species, spatial_extent, RCS_WS, RCS_buff, `Endangered Species Act`,
+                `Species of Greatest\nConserv. Need`, `IUCN Red List`) %>%
+  filter(!duplicated(.))
 str(RCS_index_con)
+
+RCS_index_con %>%
+  pivot_longer(cols=c('RCS_WS','RCS_buff'), names_to='grain size', values_to='RCS') %>%
+  pivot_longer(cols=c(`Endangered Species Act`,
+                      `Species of Greatest\nConserv. Need`,
+                      `IUCN Red List`), names_to='Geopolitical Group', values_to='Status') %>%
+  ggplot()+
+  geom_boxplot(aes(x=Status, y=RCS, fill=`Geopolitical Group`))+
+  facet_wrap(~spatial_extent*`grain size`, 
+             scales = 'free')+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(size=8, angle=30, hjust=.9),
+        legend.position = 'none',)
 
 # RCS & conservation status quantification ----
 # differences in mean between conservation status
 RCS_index_con_icn<-RCS_index_con %>% #removing small groups
+  dplyr::select(-`Endangered Species Act`, -`Species of Greatest\nConserv. Need`) %>%
   filter(!(`IUCN Red List` %in% c('Not listed', 'Extinct in the wild', 
-                                  'Extinct')))
+                                  'Extinct'))) %>%
+  mutate(`IUCN Red List`=factor(`IUCN Red List`))
 # buffered points
 b_swap_k<-kruskal.test(formula=RCS_buff~`Species of Greatest\nConserv. Need`,
-                       data=RCS_index_con)
+                       data=RCS_index_con[RCS_index_con$spatial_extent=="entire native NA range",])
 b_esa_k<-kruskal.test(formula=RCS_buff~`Endangered Species Act`,
-                      data=RCS_index_con)
+                      data=RCS_index_con[RCS_index_con$spatial_extent=="entire native NA range",])
 boxplot(formula=RCS_buff~`IUCN Red List`, data=RCS_index_con_icn)
 b_iucn_k<-kruskal.test(formula=RCS_buff~`IUCN Red List`,
-                       data=RCS_index_con_icn)
+                       data=RCS_index_con_icn[RCS_index_con_icn$spatial_extent=="entire native NA range",])
 
 # watershed
 ws_swap_k<-kruskal.test(formula=RCS_WS~`Species of Greatest\nConserv. Need`,
-                        data=RCS_index_con)
+                        data=RCS_index_con[RCS_index_con$spatial_extent=="entire native NA range",])
 ws_esa_k<-kruskal.test(formula=RCS_WS~`Endangered Species Act`,
-                       data=RCS_index_con)
+                       data=RCS_index_con[RCS_index_con$spatial_extent=="entire native NA range",])
 boxplot(formula=RCS_WS~`IUCN Red List`, data=RCS_index_con_icn)
 ws_iucn_k<-kruskal.test(formula=RCS_WS~`IUCN Red List`,
-                        data=RCS_index_con_icn)
+                        data=RCS_index_con_icn[RCS_index_con_icn$spatial_extent=="entire native NA range",])
+
+# buffered points
+b_swap_k_l48<-kruskal.test(formula=RCS_buff~`Species of Greatest\nConserv. Need`,
+                       data=RCS_index_con[RCS_index_con$spatial_extent=="native L48 range",])
+b_esa_k_l48<-kruskal.test(formula=RCS_buff~`Endangered Species Act`,
+                      data=RCS_index_con[RCS_index_con$spatial_extent=="native L48 range",])
+b_iucn_k_l48<-kruskal.test(formula=RCS_buff~`IUCN Red List`,
+                       data=RCS_index_con_icn[RCS_index_con_icn$spatial_extent=="native L48 range",])
+
+# watershed
+ws_swap_k_l48<-kruskal.test(formula=RCS_WS~`Species of Greatest\nConserv. Need`,
+                        data=RCS_index_con[RCS_index_con$spatial_extent=="native L48 range",])
+ws_esa_k_l48<-kruskal.test(formula=RCS_WS~`Endangered Species Act`,
+                       data=RCS_index_con[RCS_index_con$spatial_extent=="native L48 range",])
+ws_iucn_k_l48<-kruskal.test(formula=RCS_WS~`IUCN Red List`,
+                        data=RCS_index_con_icn[RCS_index_con_icn$spatial_extent=="native L48 range",])
+
+library(betareg)
+summary(betareg(RCS_WS~`IUCN Red List`+spatial_extent, data=RCS_index_con_icn))
 
 # making a table of kruskal wallis outputs
 kruskal_res<-sapply(list(ws_esa_k, ws_swap_k, ws_iucn_k,
-                         b_esa_k, b_swap_k, b_iucn_k), unlist) %>% 
-  t() %>% as_tibble() %>%
-  mutate(Chi2=round(as.numeric(`statistic.Kruskal-Wallis chi-squared`),3),
+                         b_esa_k, b_swap_k, b_iucn_k,
+                         ws_esa_k_l48, ws_swap_k_l48, ws_iucn_k_l48,
+                         b_esa_k_l48, b_swap_k_l48, b_iucn_k_l48), unlist) %>% 
+  t() %>% as_tibble() %>% 
+  mutate(grain.size=ifelse(grepl('WS', data.name), 'watershed','buffer'),
+         spatial_extent=c(rep('entire range', 6), rep('contig US', 6)),
+         Chi2=round(as.numeric(`statistic.Kruskal-Wallis chi-squared`),3),
          p=round(as.numeric(p.value), 4),
          star=ifelse(p<0.1, '*', NA)) %>%
   rename(df='parameter.df') %>%
-  dplyr::select(data.name, df, Chi2, p, star)
-kruskal_res
+  dplyr::select(spatial_extent, grain.size, data.name, df, Chi2, p, star)
+kruskal_res %>% arrange(star)
+
+kruskal_res %>% group_by(data.name, grain.size) %>%
+  pivot_wider(names_from = 'spatial_extent', values_from='p') %>%
+  summarize(`entire range`=mean(`entire range`, na.rm=T),
+            `contig US`=mean(`contig US`, na.rm=T)) %>%
+  ggplot()+
+  geom_linerange(aes(x=data.name, ymin=`entire range`, ymax=`contig US`))+
+  geom_point(aes(x=data.name, y=`entire range`, color='Entire'), size=3)+
+  geom_point(aes(x=data.name, y=`contig US`, color='L48'), size=3)+
+  scale_x_discrete('')+
+  scale_y_continuous('p value', trans='log10')+
+  facet_wrap(~grain.size, scales='free',ncol=1,
+             strip.position = 'left')+
+  coord_flip()+
+  theme_cowplot()+
+  theme(legend.position='bottom',
+        strip.placement = 'outside',
+        strip.background = element_rect(fill=NA))
 
 #plot for mean differences
 plot_common_elements<-ggplot(data=RCS_index_con)+
@@ -158,7 +217,7 @@ plot_iucn_ws<-plot_common_elements+
   geom_boxplot(aes(x=`IUCN Red List`, y=RCS_WS), alpha=0.5,
                outlier.alpha = 0)+
   geom_text(x='Endangered', y=.25,
-            label="paste('H'[3]*' = 6.7, p = 0.08')",
+            label="paste('H'[3]*' = 8.64, p = 0.04')",
             parse=T, size=2)+
   scale_y_continuous('')+
   ggtitle('\nIUCN Red List')+
@@ -168,7 +227,7 @@ plot_esa_ws<-plot_common_elements+
   geom_boxplot(aes(x=`Endangered Species Act`, y=RCS_WS), alpha=0.3,
                outlier.alpha = 0)+
   geom_text(x='Threatened', y=.25,
-            label="paste('H'[2]*' = 0.02, p = 0.99')",
+            label="paste('H'[2]*' = 0.31, p = 0.86')",
             parse=T, size=2)+
   scale_y_continuous('Watershed RCS')+
   ggtitle('Endangered\nSpecies Act')
@@ -177,7 +236,7 @@ plot_sgcn_ws<-plot_common_elements+
   geom_boxplot(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS), alpha=0.3,
                outlier.alpha = 0)+
   geom_text(x='Not in SWAP', y=.25,
-            label="paste('H'[1]*' = 1.2, p = 0.3')",
+            label="paste('H'[1]*' = .30, p = 0.58')",
             parse=T, size=2)+
   ggtitle('Species of Greatest\nConserv. Need')+
   scale_y_continuous('')+
@@ -188,7 +247,7 @@ plot_iucn_b<-plot_common_elements+
   geom_boxplot(aes(x=`IUCN Red List`, y=RCS_buff), alpha=0.5,
                outlier.alpha = 0)+
   geom_text(x='Endangered', y=.25,
-            label="paste('H'[3]*' = 4.4, p = 0.2')",
+            label="paste('H'[3]*' = 6.23, p = 0.10')",
             parse=T, size=2)+
   scale_y_continuous('')+
   ggtitle('\nIUCN Red List')+
@@ -198,7 +257,7 @@ plot_esa_b<-plot_common_elements+
   geom_boxplot(aes(x=`Endangered Species Act`, y=RCS_buff), alpha=0.3,
                outlier.alpha = 0)+
   geom_text(x='Threatened', y=.25,
-            label="paste('H'[2]*' = 0.6, p = 0.8')",
+            label="paste('H'[2]*' = 0.79, p = 0.67')",
             parse=T, size=2)+
   scale_y_continuous('1 km buffer RCS')+
   ggtitle('Endangered\nSpecies Act')
@@ -207,7 +266,7 @@ plot_sgcn_b<-plot_common_elements+
   geom_boxplot(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_buff), alpha=0.3,
                outlier.alpha = 0)+
   geom_text(x='Not in SWAP', y=.25,
-            label="paste('H'[1]*' = 1.4, p = 0.2')",
+            label="paste('H'[1]*' = 0.14, p = 0.71')",
             parse=T, size=2)+
   scale_y_continuous('')+
   ggtitle('Species of Greatest\nConserv. Need')+
