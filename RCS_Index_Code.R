@@ -7,7 +7,7 @@
 # and calculates Rarity and Climate Sensitivity index (RCS) for each species and range metric. 
 
 # Install and load necessary libraries.
-library(tidyverse)
+library(tidyverse); library(cowplot)
 
 # Import climatic breath for each species and area of occurrence -----
 AOOs <- read.csv('rcs_results/AOO HUC12 Output_20201019.csv')
@@ -29,9 +29,12 @@ NAS_nativetrans<-c('Acris crepitans', 'Anaxyrus boreaus',
                    'Lithobates pipiens','Lithobates sphenocephalus',
                    'Pseudacris regilla','Rana aurora',
                    'Rhinella marina')
-NAS_exotic<-c('Osteopilus septentrionalis','Xenopus laevis', 'Rhinella marina', 'Lithobates fisheri')
+NAS_exotic<-c('Osteopilus septentrionalis','Xenopus laevis')
+mis_others<-c('Rhinella marina', #invasive around the world
+              'Lithobates fisheri', #taxonomic nightmare
+              'Incilius valliceps') #only native to Mexico
 sp_exclude <- sp_range_wiL48 %>% filter(per_inside_us <= .200) %>%
-  pull(scientific_name) %>% c(NAS_exotic)
+  pull(scientific_name) %>% c(NAS_exotic, mis_others)
 sp_exclude
 
 # Calculate RCS index for entire native range -----
@@ -196,7 +199,6 @@ RCS_Data %>%
   group_by(name) %>%
   mutate(rcs_dif=`entire native NA range`-`native L48 range`,
          rank_dif=rank(`entire native NA range`)-rank(`native L48 range`)) %>%
-  filter(species != 'Incilius valliceps') %>%
   ggplot(aes(x=`entire native NA range`, y=`native L48 range`))+
   geom_polygon(data=data.frame(x=c(0,1,1), y=c(0,0,1)),
                aes(x=x, y=y,fill='less threatened if only consider contiguous US'),  alpha=0.5)+
@@ -219,7 +221,7 @@ ggsave('rcs_results/figures/sup_diff_btwn_range_rcs.jpg',
        width=6, height=4)
 
 ### Plots -----
-library(ggplot2); library(cowplot); library(scales)
+library(ggplot2); library(scales)
 
 source('RCS_Conserv_Status.R') #identifies which taxa are on conservation lists
 con_plot_df<-RCS_index_con %>%
@@ -237,20 +239,24 @@ con_plot_df<-RCS_index_con %>%
   filter(!duplicated(.))
 
 unique(con_plot_df$`Listed on:`)
-# RCS Dotplot code
-RCS_Data %>%
-  dplyr::select(species, SpFac, RCS_WS, RCS_buff) %>%
+
+# RCS Dotplot code ----
+bind_rows(RCS_Data, RCS_Data_L48) %>%
+  dplyr::select(species, SpFac, RCS_WS, RCS_buff, spatial_extent) %>%
   pivot_longer(cols=c('RCS_WS','RCS_buff')) %>% 
   mutate(grain.size=recode(name, RCS_buff='1km Buffers',
                            RCS_WS='Watersheds'),
+         spatial_extent=recode(spatial_extent, 'entire native NA range'='NA range,',
+                               'native L48 range'='US range,'),
          filt.rank=as.numeric(SpFac),
-         box.min=ifelse(filt.rank > 49, 1.01, .85),
-         box.max=ifelse(filt.rank > 49, 1.03, .899),
-         boy.min=ifelse(filt.rank > 49, filt.rank-0.4-49, filt.rank-0.4),
-         boy.max=ifelse(filt.rank > 49, filt.rank+0.4-49, filt.rank+0.4),
-         facet.group=factor(case_when(filt.rank > 49~'vulnerable',
+         box.min=ifelse(filt.rank > 46, 1.01, .85),
+         box.max=ifelse(filt.rank > 46, 1.03, .899),
+         boy.min=ifelse(filt.rank > 46, filt.rank-0.4-46, filt.rank-0.4),
+         boy.max=ifelse(filt.rank > 46, filt.rank+0.4-46, filt.rank+0.4),
+         facet.group=factor(case_when(filt.rank > 46~'vulnerable',
                                T~'not as vulnerable'),
-                               levels=c('vulnerable','not as vulnerable'))) %>%
+                               levels=c('vulnerable','not as vulnerable')),
+         shape.group=paste(spatial_extent, grain.size)) %>%
   left_join(con_plot_df) %>%
   filter(!duplicated(.)) %>%
   #group_by(facet.group)%>% summarize(max(value))
@@ -258,30 +264,54 @@ RCS_Data %>%
   geom_rect(aes(fill=`Listed on:`, xmin=box.min, xmax=box.max, 
                 ymin=boy.min, ymax=boy.max))+
   geom_point(aes(x=value, y=SpFac,
-                 shape=grain.size), size=2, alpha=0.6)+
-  scale_shape_manual('Grain Size', values=c(16,0))+
+                 shape=shape.group, color=shape.group), 
+             size=2, alpha=0.6)+
+  scale_shape_manual('Spatial Extent\n& Grain Size',
+                     values=rep(c(16,0),2))+
+  scale_color_manual('Spatial Extent\n& Grain Size', 
+                     values = c('black','black','grey','grey'))+
   scale_fill_manual(values=c(viridis_pal(option='magma', 
                                          begin=.3, end=.75)(3), 
                              'lightgrey'))+
   scale_x_reverse(name="RCS Index", expand=c(0,0), 
-                  breaks=c(0, .25, .5, .7, .8, .9, 1))+
+                  breaks=c(0, .25, .5, .76, .9, 1))+
   scale_y_discrete(name="")+
-  theme_cowplot()  +
-  facet_wrap(~facet.group, scales = 'free') +
+  theme_cowplot() +
+  facet_wrap(~facet.group, scales = 'free')+
   theme(panel.grid.major.y = element_line(color="lightgrey"),
         axis.text.y = element_text(size=8, face='italic'),
         axis.title.y=element_text(size=-1),
         axis.text.x = element_text(size=10, angle=30, hjust=.9),
         axis.title.x = element_text(size=10),
-        strip.background = element_rect(fill=NA),
-        strip.text=element_text(size=11),
+        strip.background = element_blank(),
+        strip.text=element_blank(),
         legend.position='bottom',
         legend.box="vertical",
-        legend.title = element_text(size=12))+
-  guides(fill=guide_legend(nrow=2))
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=9))+
+  guides(fill=guide_legend(nrow=2),
+         color=guide_legend(nrow=2, alpha=1),
+         shape=guide_legend(nrow=2, alpha=1))
 
-ggsave(paste0('rcs_results/figures/RCS_jpg_new_', 
+ggsave(paste0('rcs_results/figures/RCS_jpg_both', 
               format(Sys.Date(), '%Y%m%d'),'.jpg'), width=6, height=7)
+
+RCS_Data %>% filter(spatial_extent=='entire native NA range') %>%
+  filter(RCS_WS >= 0.779)
+  #pull(RCS_WS) %>% quantile()
+
+RCS_Data %>% separate(species, into=c('genera','spnomin')) %>%
+  group_by(genera) %>%
+  filter(spatial_extent=='entire native NA range') %>%
+  dplyr::summarize(median(RCS_WS),
+                   median(RCS_buff),
+                   n=n()) %>%
+    arrange(desc(`median(RCS_WS)`))
+
+RCS_Data %>%
+  filter(RCS_WS >= median(RCS_Data$RCS_WS)) %>%
+           left_join(con_plot_df) %>%
+  filter(`Listed on:`=='None') %>% pull(species)#count(`Listed on:`)
 
 count_rcs<-RCS_Data %>%
   left_join(read.csv('data/anuran_occ_all20200708.csv', stringsAsFactors = F) %>%
@@ -329,27 +359,53 @@ RCS_Data %>%
   scale_color_viridis_d()
 
 RCS_Data %>%
-  pivot_longer(cols=c("WS_AOO_ind","buff_AOO_ind")) %>%
-  ggplot()+geom_density(aes(value, fill=name))
+  filter(spatial_extent=='entire native NA range') %>%
+  pivot_longer(cols=c("buffer","watershed")) %>%
+  mutate(name=recode(name, buffer='1km buffered pts', 
+                     watershed='Watersheds')) %>%
+  ggplot()+geom_histogram(aes(value), fill='grey')+
+  geom_vline(data=data.frame(name=c('1km buffered pts', 'Watersheds'),
+                            median=c(1998.8,46845.2)),
+            aes(xintercept=median), linetype='dashed')+
+  scale_x_continuous('Area of Occupancy',
+                     labels=function(x) {ifelse(x==0, "0", parse(text=gsub("[+]", "", gsub("e", " %*% 10^", scientific_format()(x)))))} )+
+   facet_wrap(~name, scales = 'free')+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(size=9, angle=20, hjust=.9),
+        axis.text.y = element_text(size=9),
+        strip.background = element_rect(fill=NA))
+ggsave('rcs_results/figures/supp_area.jpg', width=6, height=3)
 
 area_order<-RCS_Data %>% arrange(desc(WS_AOO_ind)) %>%
   pull(species)
 
+# Figure S4 Area of Occupancy ----
 RCS_Data %>% 
-  select(SpFac, species, watershed, buffer) %>%
+  bind_rows(RCS_Data_L48 %>% rename(buffer='usa_l48_alb_1km',
+                                    watershed='huc12_WS')) %>% 
+  select(SpFac, species, watershed, buffer, spatial_extent)%>%
   mutate(SpFacA=factor(species, levels=area_order),
-         filt.rank=as.numeric(SpFacA),
+         filt.rank=as.numeric(SpFac),
          boy.min=filt.rank-0.4,
          boy.max=filt.rank+0.4) %>%
   left_join(con_plot_df) %>%
-  filter(!duplicated(.))%>% 
+  filter(!duplicated(.)) %>% 
   ggplot() +
   geom_rect(aes(fill=`Listed on:`, xmin=6, xmax=10, 
                 ymin=boy.min, ymax=boy.max))+
-  geom_point(aes(x=watershed, y=SpFacA, shape="Watershed"), size=2)+
-  geom_point(aes(x=buffer, y=SpFacA, shape="1km Buffer"), size=2)+
-  scale_x_log10(name=expression("Area of Occurrence km"^2), expand=c(0,0))+
+  geom_point(aes(x=watershed, y=SpFac, 
+                 color=spatial_extent, shape="Watershed"), 
+             size=2, alpha=0.6)+
+  geom_point(aes(x=buffer, y=SpFac, color=spatial_extent,
+                 shape="1km Buffer"), 
+             size=2, alpha=0.6)+
+  scale_x_log10(name=expression("Area of Occurrence km"^2), expand=c(0,0),
+                breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x)),
+                limits=c(6,1e6))+
   scale_y_discrete(name="")+
+  scale_color_manual('Spatial Extent', values=c('black','grey'),
+                     labels=c('NA range', 'US range'))+
   scale_shape_manual('Grain Size', values=c(16,0))+
   scale_fill_manual(values=c(viridis_pal(option='magma', 
                                          begin=.3, end=.75)(3), 
@@ -357,16 +413,18 @@ RCS_Data %>%
   theme_cowplot()+
   theme(panel.grid.major.y = element_line(color="lightgrey"),
         axis.text.y = element_text(size=8, face='italic'),
-        axis.text.x = element_text(size=9, angle=20))
+        axis.text.x = element_text(size=9),
+        axis.title.x=element_text(size=10))
 
-ggsave(paste0('rcs_results/figures/area_plot_area_order_jpg_',
+ggsave(paste0('rcs_results/figures/supp_aoo_rcs_order',
               format(Sys.Date(), '%Y%m%d'),'.jpg'), width=6, height=9.5)
 
-# Climate Niche Breadth Plot
+# Supplemental Fig 5 Climate Niche Breadth Plot ----
 climate_order <- RCS_Data %>% arrange(desc(WS_CS)) %>%
   pull(species)
 RCS_Data %>% 
-  select(SpFac, species, ends_with("CS")) %>%
+  bind_rows(RCS_Data_L48) %>%
+  select(SpFac, species, spatial_extent, ends_with("CS")) %>%
   pivot_longer(cols=c("ppt_WS.CS", 'tmax_WS.CS','tmin_WS.CS',
                       'ppt_buf.CS','tmax_buf.CS','tmin_buf.CS')) %>%
   mutate(grain.size=case_when(grepl('WS', name)~'watershed',

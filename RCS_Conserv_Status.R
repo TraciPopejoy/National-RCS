@@ -1,11 +1,11 @@
 # Investigating how the Anuran RCS aligns with conservation status - 'RCS_Conserv_Status.R'
 # Revised by Traci DuBose, 20Sept2020
 
-library(tidyverse)
+library(tidyverse);library(cowplot)
 
 #paths for data files
-PATH_RCS_index<-'rcs_results/RCS_table_20201024.csv'
-PATH_RCS_L48_index <-'rcs_results/RCS_table_L48_20201024.csv'
+PATH_RCS_index<-'rcs_results/RCS_table_20201028.csv'
+PATH_RCS_L48_index <-'rcs_results/RCS_table_L48_20201028.csv'
 PATH_NatSGCN<-'data/National_SpGCC.csv'
 PATH_FedESA<-'data/FWS_Species_Data_Explorer.csv'
 
@@ -50,8 +50,10 @@ esa_anuran_spp <- read.csv(PATH_FedESA, stringsAsFactors = F) %>%
   pivot_longer(cols=starts_with('n')) %>%
   filter(!is.na(value),
          name=='n1', #should be the genus for each taxa
-         value %in% anuran_genus) %>% #only keep anuran genus 
-  mutate(sname=recode(sname, 'Rana chiricahuensis'='Lithobates chiricahuensis'))
+         value %in% c(anuran_genus, 'Hyla','Bufo')) %>% #only keep anuran genus 
+  mutate(sname=recode(sname, 'Rana chiricahuensis'='Lithobates chiricahuensis',
+                      'Bufo houstonensis'='Anaxyrus houstonensis',
+                      'Bufo hemiophrys baxteri'= 'Anaxyrus baxteri'))
 
 # Species Status based on IUCN redlist
 #install.packages('rredlist')
@@ -84,14 +86,15 @@ IUCN_anuran %>% filter(IUCNcategory=='UNK')
 # Acris blanchardi was recently split from Acris crepitans
 # Lithobates kauffeldi was recently moved from Rana
 # I can't find either in the IUCN red list.
+IUCN_anuran %>% filter(IUCNcategory=="EW")
 
 #for later recoding of the variables
 iucn_cat<-c(UNK='Not listed', LC='Least Concern', NT='Near Threatened', VU='Vulnerable', 
   EN='Endangered', CR='Critically Endangered', EW='Extinct in the wild', EX ='Extinct')
 
 ### RCS & conservation graph dataframe ####
-RCS_index_con<-RCS_Data %>%
-  bind_rows(RCS_Data_L48) %>% 
+RCS_index_con<-RCS_index %>%
+  bind_rows(read.csv(PATH_RCS_L48_index)) %>% 
   dplyr::select(species, spatial_extent, RCS_WS, RCS_buff) %>% #only want these columns
   #adding in the ESA list
   left_join(esa_anuran_spp, by=c('species'='sname')) %>%
@@ -171,7 +174,7 @@ ws_iucn_k_l48<-kruskal.test(formula=RCS_WS~`IUCN Red List`,
                         data=RCS_index_con_icn[RCS_index_con_icn$spatial_extent=="native L48 range",])
 
 library(betareg)
-summary(betareg(RCS_WS~`IUCN Red List`+spatial_extent, data=RCS_index_con_icn))
+summary(betareg(RCS_WS~`IUCN Red List`*spatial_extent, data=RCS_index_con_icn))
 
 # making a table of kruskal wallis outputs
 kruskal_res<-sapply(list(ws_esa_k, ws_swap_k, ws_iucn_k,
@@ -186,7 +189,14 @@ kruskal_res<-sapply(list(ws_esa_k, ws_swap_k, ws_iucn_k,
          star=ifelse(p<0.1, '*', NA)) %>%
   rename(df='parameter.df') %>%
   dplyr::select(spatial_extent, grain.size, data.name, df, Chi2, p, star)
-kruskal_res %>% arrange(star)
+kruskal_res %>% arrange(star, p)
+
+d_test_data<-RCS_index_con_icn %>%
+  filter(spatial_extent=='entire native NA range')
+dunn.test(d_test_data$RCS_WS,
+          d_test_data$`IUCN Red List`,
+          method="bonferroni", alpha=0.1)
+
 
 kruskal_res %>% group_by(data.name, grain.size) %>%
   pivot_wider(names_from = 'spatial_extent', values_from='p') %>%
@@ -209,172 +219,127 @@ kruskal_res %>% group_by(data.name, grain.size) %>%
 #plot for mean differences
 plot_common_elements<-ggplot(data=RCS_index_con)+
   scale_x_discrete("")+
+  scale_color_manual(values=c('darkgrey','lightgrey'),
+                     aesthetics=c('fill','color'), guide=F)+
   theme_bw()+
   theme(axis.text.x = element_text(angle=30, hjust=.9),
         title = element_text(size=9))
+
 plot_iucn_ws<-plot_common_elements+
-  geom_jitter(aes(x=`IUCN Red List`, y=RCS_WS), color='grey', alpha=0.5)+
-  geom_boxplot(aes(x=`IUCN Red List`, y=RCS_WS), alpha=0.5,
-               outlier.alpha = 0)+
-  geom_text(x='Endangered', y=.25,
-            label="paste('H'[3]*' = 8.64, p = 0.04')",
-            parse=T, size=2)+
+  #geom_jitter(aes(x=`IUCN Red List`, y=RCS_WS, 
+  #                color=spatial_extent, group=spatial_extent))+
+  geom_boxplot(aes(x=`IUCN Red List`, y=RCS_WS,
+                   fill=spatial_extent))+
+  #geom_text(label="paste('NA range: H'[3]*' = 7.6, p = 0.06')", 
+  #          x='Endangered', y=.25,
+  #          parse=T, size=3)+
   scale_y_continuous('')+
   ggtitle('\nIUCN Red List')+
   theme(axis.title.y = element_text(size=-3))
 plot_esa_ws<-plot_common_elements+
-  geom_jitter(aes(x=`Endangered Species Act`, y=RCS_WS), color='grey', alpha=0.5)+
-  geom_boxplot(aes(x=`Endangered Species Act`, y=RCS_WS), alpha=0.3,
-               outlier.alpha = 0)+
-  geom_text(x='Threatened', y=.25,
-            label="paste('H'[2]*' = 0.31, p = 0.86')",
-            parse=T, size=2)+
+  #geom_jitter(aes(x=`Endangered Species Act`, y=RCS_WS), color='grey', alpha=0.5)+
+  geom_boxplot(aes(x=`Endangered Species Act`, y=RCS_WS,
+                   fill=spatial_extent))+
+  #geom_text(x='Threatened', y=.25,
+  #          label="paste('H'[2]*' = 0.31, p = 0.86')",
+  #          parse=T, size=2)+
   scale_y_continuous('Watershed RCS')+
   ggtitle('Endangered\nSpecies Act')
 plot_sgcn_ws<-plot_common_elements+
-  geom_jitter(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS), color='grey', alpha=0.5)+
-  geom_boxplot(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS), alpha=0.3,
-               outlier.alpha = 0)+
-  geom_text(x='Not in SWAP', y=.25,
-            label="paste('H'[1]*' = .30, p = 0.58')",
-            parse=T, size=2)+
+  #geom_jitter(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS), color='grey', alpha=0.5)+
+  geom_boxplot(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_WS,
+                   fill=spatial_extent))+
+  #geom_text(x='Not in SWAP', y=.25,
+  #          label="paste('H'[1]*' = .30, p = 0.58')",
+  #          parse=T, size=2)+
   ggtitle('Species of Greatest\nConserv. Need')+
   scale_y_continuous('')+
   theme(axis.title.y = element_text(size=-3))
 #buff graphs
 plot_iucn_b<-plot_common_elements+
-  geom_jitter(aes(x=`IUCN Red List`, y=RCS_buff), color='grey', alpha=0.5)+
-  geom_boxplot(aes(x=`IUCN Red List`, y=RCS_buff), alpha=0.5,
-               outlier.alpha = 0)+
-  geom_text(x='Endangered', y=.25,
-            label="paste('H'[3]*' = 6.23, p = 0.10')",
-            parse=T, size=2)+
+  #geom_jitter(aes(x=`IUCN Red List`, y=RCS_buff), color='grey', alpha=0.5)+
+  geom_boxplot(aes(x=`IUCN Red List`, y=RCS_buff,
+                   fill=spatial_extent))+
+  #geom_text(x='Endangered', y=.25,
+  #          label="paste('H'[3]*' = 6.23, p = 0.10')",
+  #          parse=T, size=2)+
   scale_y_continuous('')+
   ggtitle('\nIUCN Red List')+
   theme(axis.title.y = element_text(size=-3))
 plot_esa_b<-plot_common_elements+
-  geom_jitter(aes(x=`Endangered Species Act`, y=RCS_buff), color='grey', alpha=0.5)+
-  geom_boxplot(aes(x=`Endangered Species Act`, y=RCS_buff), alpha=0.3,
-               outlier.alpha = 0)+
-  geom_text(x='Threatened', y=.25,
-            label="paste('H'[2]*' = 0.79, p = 0.67')",
-            parse=T, size=2)+
+  #geom_jitter(aes(x=`Endangered Species Act`, y=RCS_buff), color='grey', alpha=0.5)+
+  geom_boxplot(aes(x=`Endangered Species Act`, y=RCS_buff,
+                   fill=spatial_extent))+
+  #geom_text(x='Threatened', y=.25,
+  #          label="paste('H'[2]*' = 0.79, p = 0.67')",
+  #          parse=T, size=2)+
   scale_y_continuous('1 km buffer RCS')+
   ggtitle('Endangered\nSpecies Act')
 plot_sgcn_b<-plot_common_elements+
-  geom_jitter(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_buff), color='grey', alpha=0.5)+
-  geom_boxplot(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_buff), alpha=0.3,
-               outlier.alpha = 0)+
-  geom_text(x='Not in SWAP', y=.25,
-            label="paste('H'[1]*' = 0.14, p = 0.71')",
-            parse=T, size=2)+
+  #geom_jitter(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_buff), color='grey', alpha=0.5)+
+  geom_boxplot(aes(x=`Species of Greatest\nConserv. Need`, y=RCS_buff,
+                   fill=spatial_extent))+
+  #geom_text(x='Not in SWAP', y=.25,
+  #          label="paste('H'[1]*' = 0.14, p = 0.71')",
+  #          parse=T, size=2)+
   scale_y_continuous('')+
   ggtitle('Species of Greatest\nConserv. Need')+
   theme(axis.title.y = element_text(size=-3))
 
 #plot all in one row
-library(cowplot)
 plot_grid(plot_esa_ws, plot_sgcn_ws, plot_iucn_ws,
           plot_esa_b, plot_sgcn_b, plot_iucn_b,
           nrow=2, rel_widths = c(.85,.85,1), labels=c('A','','','B','',''))
 ggsave(paste0('rcs_results/figures/RCS_con_means', format(Sys.Date(),'%Y%m%d'),'.jpg'), 
        width=6, height=6)
 
-# RCS to predict whether considered threatened or not ----
-#stat notes & examples
-# using Practical Guide to Logistic Regression by Joseph M. Hilbe (2015) as a guide
-# also https://m-clark.github.io/docs/GAMS.pdf for explanation of GAMS
-library(mgcv)
+# Table of N in each group ---
+RCS_index_con %>%
+  filter(spatial_extent=='entire native NA range') %>%
+  select(species, `Endangered Species Act`, 
+         `Species of Greatest\nConserv. Need`, `IUCN Red List`) %>%
+  pivot_longer(-species) %>%
+  group_by(name, value) %>% tally()
 
-rcs<-RCS_index_con %>%
-  mutate(ESA_bin=case_when(`Endangered Species Act`=='Not on ESA'~0,
-                           T~1),
-         State_bin=case_when(`Species of Greatest\nConserv. Need`=='in >1 SWAP'~1,
-                             T~0),
-         Int_bin=case_when(`IUCN Red List` %in% c('Not listed', 'Least Concern', 'Near Threatened')~0,
-                           T~1))
-hist(rcs$RCS_WS)
+RCS_index_con %>%
+  filter(spatial_extent=='entire native NA range',
+         `Endangered Species Act`=='Endangered') %>%
+  pull(RCS_WS) %>% quantile(0.7)
 
-esagam <- gam(ESA_bin~s(RCS_WS), family=binomial, data=rcs)
-summary(esagam);plot(esagam)
-summary(esagam)$s.table
-esaglm<-glm(ESA_bin~RCS_WS, family=binomial, data=rcs)
-summary(esaglm)
-AIC(esagam, esaglm)
+RCS_index_con %>%
+  filter(spatial_extent=='entire native NA range',
+         RCS_WS >= 0.946)
 
-stagam<-gam(State_bin~s(RCS_WS), family=binomial, data=rcs) 
-summary(stagam);plot(stagam) #edf close to 1, ok to do logistic regression on?
-summary(stagam)$s.table
-staglm<-glm(State_bin~RCS_WS, family=binomial, data=rcs)
-summary(staglm)
-AIC(stagam, staglm)
-
-intgam<-gam(Int_bin~s(RCS_WS), family=binomial, data=rcs) 
-summary(intgam);plot(intgam)
-summary(intgam)$s.table
-intglm<-glm(Int_bin~RCS_WS, family=binomial, data=rcs)
-summary(intglm)
-AIC(intgam, intglm)
-
-log.p.vals<-rbind(summary(intgam)$s.table,
-          summary(esagam)$s.table,
-          summary(stagam)$s.table) %>%
-  as_tibble() %>%
-  mutate(name=c('IUCN','ESA','SWAP'))
-
-new_data_fake<-data.frame(State_bin=1,
-                          ESA_bin=1,
-                          Int_bin=1,
-                          RCS_WS=seq(0,1,by=0.01))
-loking<-new_data_fake %>%
-  mutate('IUCN'=predict(intgam, newdata=new_data_fake,type="response"),
-         'ESA'=predict(esagam, newdata=new_data_fake,type="response"),
-         'SWAP'=predict(stagam, newdata=new_data_fake,type="response")) %>%
-  pivot_longer(cols = c('ESA',"SWAP", "IUCN"))
-
-ggplot()+
-  geom_line(data=loking, 
-            aes(x=RCS_WS, y=value, color=name), size=2)+
-  geom_text(aes(x=c(.95, .87, .7), 
-                y=c(.065, .4, .82), 
-                label=c('ESA','IUCN*','State')))+
-  scale_x_continuous('watershed RCS index')+
-  scale_y_continuous('Prob. of being listed')+
-  scale_color_viridis_d(option='E', end=.8, guide=F)+
-  theme_cowplot()+theme(legend.position = 'top')+
-  ggtitle('Logistic Regression with cubic spline')
-
-rcs_ddddd<-rcs %>%
-  rename('ESA'=ESA_bin, 'SWAP'=State_bin, 'IUCN'=Int_bin) %>%
-  pivot_longer(cols = c('ESA',"SWAP", "IUCN"))
-ggplot()+
-  geom_line(data=loking, 
-            aes(x=RCS_WS, y=value, color=name), size=1.5)+
-  geom_point(data=rcs_ddddd, aes(x=RCS_WS, y=value, 
-                                 fill=as.factor(value)),
-             alpha=0.3, position=position_jitter(height=.02),
-             shape=21)+
-  geom_text(data=log.p.vals, x=0, y=1,
-            aes(label=paste('p = ', round(`p-value`,2))),
-            hjust=0)+
-  scale_x_continuous('watershed RCS')+
-  scale_y_continuous('Prob. of being listed')+
-  scale_colour_viridis_d('List',end=.8, option='E', guide=F)+
-  scale_fill_manual('Listed as\nThreatened',values=c('white', 'black'),
-                    labels=c('No','Yes'))+
-  facet_wrap(~name, ncol=1)+
-  theme_cowplot()+  theme(legend.position = 'bottom',
-                          axis.text.x = element_text(size=10),
-                          axis.text.y = element_text(size=10),
-                          legend.box="vertical",
-                          legend.justification = 'center') +
-  guides(fill=guide_legend(nrow=2,
-                           override.aes=list(alpha=1)))
-ggsave('rcs_results/figures/logreg_output.jpg', width=3.5, height=7)
-summary(esagam)
-summary(intgam)
-summary(stagam)
-
+# Table of Median results ---
+RCS_index_con %>% 
+  mutate(spatial_extent=recode(spatial_extent, 
+                               'entire native NA range'='entire range',
+                               'native L48 range'='contig US')) %>%
+  select(species, spatial_extent, RCS_WS, RCS_buff, 
+         `Endangered Species Act`, `Species of Greatest\nConserv. Need`, `IUCN Red List`)%>%
+  rename(watershed='RCS_WS', buffer='RCS_buff') %>%
+  pivot_longer(cols=c('watershed','buffer'), names_to='grain.size') %>% 
+  pivot_longer(cols=c(`Endangered Species Act`, `Species of Greatest\nConserv. Need`, `IUCN Red List`), 
+               names_to='con.group', values_to='con.stat') %>% 
+  mutate(con.stat=as.character(con.stat),
+         con.stat.good=recode(con.stat, 
+                              'Endangered'='conserved', 'Not on ESA'='not conserved', 'Threatened'='conserved',
+                              'Extinct in the wild'='exclude', 'Least Concern'='not conserved', 'Near Threatened'='not conserved',
+                              'Not listed'='exclude', 'Vulnerable'='conserved', 'in >1 SWAP'='conserved',
+                              'Not in SWAP'='not conserved')) %>%
+  group_by(spatial_extent, grain.size, con.group, con.stat.good) %>%
+  summarize(med.RCS=round(median(value),3))%>% 
+  pivot_wider(names_from = con.stat.good, values_from = med.RCS) %>%
+  ungroup() %>%
+  select(-exclude) %>%
+  left_join(kruskal_res  %>% 
+              mutate(con.group=case_when(substr(data.name, 5,6)=='WS' ~ substr(data.name, 11, nchar(data.name)),
+                                    substr(data.name, 5,6)=='bu' ~ substr(data.name, 13, nchar(data.name))))) %>%
+  select(-data.name, -star) %>%
+  mutate(con.group=factor(con.group, levels=c('IUCN Red List', 'Endangered Species Act', 
+                                              'Species of Greatest\nConserv. Need'))) %>%
+  arrange(desc(spatial_extent), desc(grain.size), con.group) %>%
+  write.csv('rcs_results/kruskal_wallace_res_Table.csv')
 
 
 # isolating sub species identified in SWAP or ESA ----
@@ -393,6 +358,25 @@ subspp_occ <- occurance.data %>%
   filter(subspp %in% subsp.natgcc)
 unique(subspp_occ$subspp)
 
+# which are likely under served ----
+RCS_index_con %>%
+  filter(`Endangered Species Act`=="Endangered",
+         spatial_extent=='entire native NA range') %>%
+  pull(RCS_WS) %>% quantile(.7)
+#cut off of 0.865 for 50%
+#cut off of 0.967 for 75%
+
+# 20 species underserved if use 50%
+round(17/92*100,2) #~18.5% of taxa
+RCS_index_con %>% filter(RCS_WS >= .946,
+                         `Endangered Species Act` != 'Endangered',
+                         spatial_extent=='entire native NA range')
+
+# 17 species underserved if use 50%
+round(17/92*100,2) #~18.5% of taxa
+RCS_index_con %>% filter(RCS_WS >= 0.8650,
+                         `Endangered Species Act` != 'Endangered',
+                         spatial_extent=='entire native NA range') 
 
 ### which species are unlisted but high RCS ----
 esa_spp_nc<-RCS_index_con %>%
@@ -413,4 +397,34 @@ spp_to_research<-RCS_index_con %>%
                          filter(!duplicated(.)) %>% pull(species))) %>%
   arrange(desc(species))
 write.csv(spp_to_research, 'rcs_results/spp_to_research.csv')
+  
+# Look at candidate species ----
+# source: https://ecos.fws.gov/ecp/report/adhoc-creator?catalogId=species&reportId=species&columns=%2Fspecies@cn,sn,status,desc,listing_date&sort=%2Fspecies@cn%20asc;%2Fspecies@sn%20asc
+# found here: https://ecos.fws.gov/ecp/species-reports > Data Explorers > FWS Species
+# definition list: https://www.fws.gov/endangered/about/listing-status-codes.html#:~:text=Resolved%20Taxon%20(RT)%20%2D%20Species,published%20in%20the%20Federal%20Register.
+test <- read.csv('C:/Users/Owner/Downloads/FWS_Species_Data_Explorer.csv')
+head(test)
+unique(test$ESA.Listing.Status)
+
+FWS_spp<-test %>% 
+  mutate(sname=Scientific.Name) %>%
+  separate(Scientific.Name, 
+           into=c('n1','n2','n3', 'n4'), 
+           sep=" ") %>%
+  filter(n1 %in% c(anuran_genus,'Hyla')) %>% arrange(Common.Name) %>%
+  anti_join(esa_anuran_spp, by=c('Common.Name', 'sname')) %>%
+  select(sname, ESA.Listing.Status, Entity.Description, ESA.Listing.Date, Common.Name) %>%
+  as_tibble()
+
+View(FWS_spp)
+
+FWS_spp %>% count(ESA.Listing.Status) %>% arrange(desc(n))
+
+FWS_spp %>% 
+  mutate(recode=) %>% #fix some taxa names
+  left_join(RCS_Data, by=c('sname'='species')) %>% 
+  select(sname, ESA.Listing.Status, RCS_WS) 
+  
+# look up these frogs here: https://ecos.fws.gov/ecp/report/species-candidate-removed-or-withdrawn
+#also Rana subaquavocalis 
   
