@@ -1,0 +1,515 @@
+---
+title: "Anuran RCS QA/QC"
+date: "11/15/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_chunk$set(dev='jpeg')
+library(tidyverse); library(sf)
+library(raster)
+library(gridExtra); library(grid); library(ggpubr); library(cowplot); library(ggforce)
+library(knitr)
+```
+
+The purpose of this appendix is to document quality assurance and quality control measures taken to ensure we are using appropriate occurrence points and climate values when calculating the RCS for these anurans.  
+
+```{r import files, echo=F, warning=F, message=F}
+# read in raw AOO & Climate Sensitivity information
+AOOs <- read.csv('rcs_results/AOO HUC12 Output_20201019.csv')
+AOO_L48 <- read.csv('rcs_results/AOOs_raw_20201019.csv')
+climate_ws_raw <- read.csv('rcs_results/taxa_ws_climate_values20201021.csv')
+climate_buf <- read.csv('rcs_results/watershed_climate_means/range.wide.weighted.CS_20201022.csv') 
+climate_buf_L48 <- read.csv('rcs_results/watershed_climate_means/buff_climate_sums_20201022.csv')
+
+# Set spatial coordinate reference system (CRS).
+crs.geo <- st_crs("+proj=longlat +ellps=WGS84 +datum=WGS84")
+crs.albers <- st_crs("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=km +no_defs")
+
+# read in the shapefiles used
+huc12<-readRDS('/home/tracidubose/huc12_wgs84_sf.rds') 
+hydro12 <- readRDS('/home/tracidubose/hydrobasins_wgs84_sf.rds')
+usa_l48_geo<-readRDS('/home/tracidubose/usal48_nad83_sf.rds') %>% st_transform(crs.geo)
+
+#climate files
+prism_tmin<-raster("/home/tracidubose/prism_files/Tmin_mean_usa.tif")
+prism_tmax <- raster("/home/tracidubose/prism_files/Tmax_mean_usa.tif") 
+# loading all the WorldClim climate data files
+hydro12_sp<-as_Spatial(hydro12)
+annual_ppt<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_12.tif")
+annual_ppt<-crop(annual_ppt, hydro12_sp)
+max_temp_sum<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_10.tif")
+max_temp_sum<-crop(max_temp_sum, hydro12_sp)
+min_temp_win<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_11.tif")
+min_temp_win<-crop(min_temp_win, hydro12_sp)
+rm(hydro12_sp)
+
+#create a North America map
+# code from: https://www.blog.cultureofinsight.com/2017/09/animated-choropleth-maps-in-r/
+# download the natural earth shapefile we need into your working directory
+URL <- "http://www.naturalearthdata.com/http//www.naturalearthdata.com/download/110m/cultural/ne_110m_admin_0_map_units.zip"
+temp <- tempfile()
+download.file(URL, temp)
+unzip(temp)
+unlink(temp)
+
+na_map <- st_read("ne_110m_admin_0_map_units.shp", quiet=T) %>% 
+  st_transform(crs = "+proj=longlat +datum=WGS84") %>%
+  filter(NAME_EN %in% c('Canada', 'Mexico'))
+#ggplot()+geom_sf(data=na_map)
+```
+
+
+# Check that raster::extract correctly computing climate values  
+I want to make sure that I am using the correct mean climate value for the watersheds. The mean climate value is an area-weighted mean calculated by the *raster::extract* function. To check this, I will first identify a subset of watersheds to check, extract the values within each watershed polygon and the areal weights of those values, and then print a map of the watershed and climate raster with the raw climate values and weights.   
+
+Step 1: Decide how many watersheds to evaluate  
+```{r, results='asis', echo=F}
+kable(climate_ws_raw %>% 
+  group_by(value_origin, watershed.name) %>% slice(1) %>% 
+  group_by(value_origin) %>% count(value_origin) %>%
+  rename(`Watershed Dataset`='value_origin', `n watersheds`='n') %>%
+  mutate(`0.025%`=round(`n watersheds`*(0.0025/10))))
+```
+
+Identify the subsample of HUCs and the current climate mean value assigned to them. 
+
+```{r identify watershed subset}
+set.seed(11202027) #repeatability
+testHUCS<-climate_ws_raw %>% 
+  group_by(value_origin, watershed.name) %>% slice(1) %>% 
+  group_by(value_origin) %>%
+  sample_n(7) %>% ungroup() %>% slice(1:9) %>%
+  mutate(watershed.name=ifelse(value_origin=='huc12' & nchar(watershed.name)==11, 
+                               paste0('0',watershed.name), watershed.name)) %>%
+  dplyr::select(-species,-X, -value_type)
+```
+```{r, echo=F, results='asis'}
+kable(testHUCS %>% 
+        rename(`Watershed Name`='watershed.name', ppt='value',
+                          `Watershed Dataset`='value_origin') %>%
+        dplyr::select(`Watershed Dataset`, everything()))
+```
+
+
+Below is a map of the watershed locations. They are very small, so I use a larger line size to increase the size though this distorts the watershed's shape at this scale. Ideally, this subset will represent a geographically diverse area of the North American continent.    
+
+```{r plot the HUC subsample, echo=F, fig.height=4, fig.width=6.5, align='center'}
+testHUC_sf<-huc12 %>% filter(huc12 %in% testHUCS$watershed.name)
+testhydro12_sf<- hydro12 %>% filter(HYBAS_ID %in% testHUCS$watershed.name)
+ggplot()+
+  geom_sf(data=na_map) +
+  geom_sf(data=usa_l48_geo)+
+  geom_sf(data=testHUC_sf, color='#660000', size=2)+
+  geom_sf(data=testhydro12_sf, color='#660000', size=2)+
+  coord_sf(ylim=c(10,65))+
+  theme_bw()
+```
+
+In the section below, I build a map for each watershed. I want to check the calculations are consistent and match what the raster is showing on the right.   
+
+```{r build huc weighted mean tables, fig.width=6.8, fig.height=7}
+prism_ppt <- raster('/home/tracidubose/prism_files/ppt_mean_usa.tif')
+#changing CRS of polygons to avoid the tranformation message
+testHUC_sf <- testHUC_sf %>% st_transform(crs(prism_ppt))
+testhydro12_sf <- testhydro12_sf %>% st_transform(crs(annual_ppt))
+
+for(u in testHUCS$watershed.name){
+  #pull out the correct polygon dataset
+  if(nchar(u)==12){
+    ws_poly<-testHUC_sf %>% rename(watershed.name='huc12')
+    env_raster<-prism_ppt
+  }
+  else{
+    ws_poly<-testhydro12_sf %>% rename(watershed.name='HYBAS_ID')
+    env_raster<-annual_ppt
+  }
+  names(env_raster)<-'ppt' #change for ease below
+  
+  # crop the raster to speed extraction & good plotting
+  bb_huc<-st_bbox(ws_poly[ws_poly$watershed.name==u,])
+  bb_huc<-extent(bb_huc[1]-.05,bb_huc[3]+.05,bb_huc[2]-.05, bb_huc[4]+.05)
+  cropped_ppt<-raster::crop(env_raster, bb_huc)
+  
+  # extract the values from within the polygon
+  raw_extract<-raster::extract(cropped_ppt, ws_poly[ws_poly$watershed.name==u,], 
+                na.rm = T, weights = TRUE, 
+                small = TRUE, method = 'simple', df = TRUE) %>%
+    mutate(ppt= round(ppt,2), #make a nicer table
+           weight.nr=weight,
+           weight=round(weight, 3)) %>%
+    dplyr::select(ppt, weight, weight.nr) 
+  # double check this is the same as my saved csv
+  wtd.avg.ppt<-sum(raw_extract$ppt*raw_extract$weight.nr)
+  
+  # make the raster compatible with ggplot
+  raster.points <- rasterToPoints(cropped_ppt)
+  raster.points <- data.frame(raster.points)
+  colnames(raster.points) <-c('x','y','layer')
+  
+  # make the watershed plot
+  huc_ppt<-ggplot()+
+    geom_raster(data=raster.points, aes(y=y, x=x, fill=layer))+
+    geom_sf(data=ws_poly[ws_poly$watershed.name==u,], 
+            size=2, color='black', fill=NA)+
+    coord_sf(xlim=bb_huc[1:2], ylim=bb_huc[3:4])+
+    ggtitle(ws_poly[ws_poly$watershed.name==u,]$watershed.name)+
+    theme_bw()+
+    theme(axis.title = element_blank(),
+          axis.text.y = element_text(size=7),
+          axis.text.x = element_text(size=7, angle=20, hjust=.9))
+  
+  # pull out check + used value
+  btm<-text_grob(paste('The weighted average should be', round(wtd.avg.ppt, 2)),
+                 hjust=.1)
+  top1<-text_grob(paste('Value used in RCS index', 
+                       round(testHUCS[testHUCS$watershed.name == u,'value'],2)),
+                 hjust=.1)
+  
+  # print the extracted table and watershed plot
+  grid.arrange(tableGrob(raw_extract %>% dplyr::select(-weight.nr), 
+                         rows=NULL, theme=ttheme_minimal(base_size=9)), 
+               huc_ppt, nrow=1,
+             top=top1, bottom=btm,
+             newpage = T)
+  print('')
+}
+```
+
+
+# Check that the units match between our two datasets PRISM & WorldClim
+
+I want to make sure that the PRISM and WorldClim datasets are compatible (Table 3). Ideally, they will have the same resolution, report the approximate same values (recognizing that PRISM represents a longer time span), and have about the same mean climate value using *raster::extract*. As PRISM data only exists within the contiguous US, we will compare the values at one of our HUC subsets.
+
+```{r prism worldclim comp table, echo=F, results='asis'}
+kable(tibble(`.`=c('Spatial extent','Spatial resolution','Temporal extent', 'Temporal resolution','Available parameters'),
+    `PRISM`=c('Contiguous U.S.','~4 km2','1895 - 2019','1 value/year','Maximum Temperature, Minimum Temperature, Annual precipitation'),
+    `WorldClim Historical Annual`=c('global','~1 km2 to ~342 km2','1970 - 2000','1 value, average of temporal extent','Max Temperature of Warmest Month, Min Temperature of Coldest Month, Annual Precipitation')),
+    caption='Table 3. Comparison of the PRISM and WorldClim datasets')
+```
+
+```{r check unit congruency between climate datasets, fig.width=7, fig.height=3, warning=F, message=F}
+#Set up a table to organize the for loop
+climate_dfs<-data.frame(var=c('Precipitation', 'Minimum.Temp', 'Maximum.Temp',
+                              'Precipitation', 'Minimum.Temp', 'Maximum.Temp'),
+                        d=c('prism_ppt', 'prism_tmin', 'prism_tmax', 
+                            'annual_ppt', 'min_temp_win', 'max_temp_sum'),
+                        type=c(rep('prism', 3), rep('world clim', 3)))
+
+for(k in unique(climate_dfs$var)){
+  # Identify which climate variable we are on
+  climate_dfs %>% filter(var==k)
+  # Isolate the test watershed
+  huc_bb<-extent(c(st_bbox(testHUC_sf[1,])[1]-.03, st_bbox(testHUC_sf[1,])[3]+.03,
+                   st_bbox(testHUC_sf[1,])[2]-.03, st_bbox(testHUC_sf[1,])[4]+.03))
+  # Get the climate data
+  prs_env<-get(climate_dfs[climate_dfs$var==k & climate_dfs$type=='prism',2])
+  names(prs_env) <- k
+  wc_env<-get(climate_dfs[climate_dfs$var==k & climate_dfs$type=='world clim',2])
+  names(wc_env) <- k
+  cropped_env_wc<-raster::crop(wc_env, huc_bb)
+  cropped_env_pr<-raster::crop(prs_env, huc_bb)
+  # make the raster compatible with ggplot
+  raster.points.wc <- data.frame(rasterToPoints(cropped_env_wc))
+  raster.points.pr <- data.frame(rasterToPoints(cropped_env_pr))
+  env.tiles<-bind_rows(raster.points.pr %>% mutate(name='prism'), 
+                       raster.points.wc %>% mutate(name='world clim')) %>%
+    rename(value=all_of(k))
+  #calculate the extracted mean climate value
+  wc_mean<-raster::extract(cropped_env_wc, testHUC_sf[1,], fun = mean, na.rm = T,
+                           weights = TRUE, small = TRUE, method = 'simple', df = TRUE)[2]
+  pr_mean<-raster::extract(cropped_env_pr, testHUC_sf[1,], fun = mean, na.rm = T,
+                           weights = TRUE, small = TRUE, method = 'simple', df = TRUE)[2]
+
+  #make the comparable plots
+  clim_comp<-ggplot()+
+    geom_raster(data=env.tiles, aes(y=y, x=x, fill=value))+
+    geom_sf(data=testHUC_sf[1,-10], size=2,color='black', fill=NA)+
+    facet_wrap(~name)+
+    ggtitle(k)+
+    theme_bw()+
+    theme(axis.title = element_blank(),
+          axis.text.y = element_text(size=7),
+          axis.text.x = element_text(size=7, angle=20, hjust=.9))
+  print(clim_comp)
+  print(paste0('The PRISM climate mean is ', round(pr_mean, 2), 
+               ' and the WorldClim climate mean is ', round(wc_mean, 2)))
+}
+
+```
+
+The below graphs represent the probability density functions of each of our climate variables. The rasters were cropped to the study extent (the North America). Each of these graphs represent the distribution of available climate values within the entire raster.    
+
+```{r climate distribution, fig.width=6.5, fig.height=2.5, echo=F, message=F, warning=F}
+rm(env_raster, ws_poly, huc_ppt, top1, btm, raster.points, wtd.avg.ppt, cropped_ppt, bb_huc)
+ppt_p<-ggplot()+
+  geom_density(aes(x=as.vector(prism_ppt$ppt_mean_usa), 
+                   fill='Prism'), alpha=0.5)+
+  geom_density(aes(x=as.vector(annual_ppt$wc2.1_2.5m_bio_12), 
+                   fill='World Clim'), alpha=0.5)+
+  scale_x_continuous('Precipitation (mm)')+
+  scale_fill_manual('Dataset', values=c('black', 'white'), guide=F)+
+  theme_minimal()+
+  theme(axis.text.x=element_text(size=7))
+
+min_p<-ggplot()+
+  geom_density(aes(x=as.vector(prism_tmin$Tmin_mean_usa), 
+                   fill='Prism'), alpha=0.5)+
+  geom_density(aes(x=as.vector(min_temp_win$wc2.1_2.5m_bio_11), 
+                   fill='World Clim'), alpha=0.5)+
+  scale_x_continuous(expression('Minimum Temp. '~degree~'C'))+
+  scale_fill_manual('Dataset', values=c('black', 'white'), guide=F)+
+  theme_minimal()+
+  theme(axis.title.y = element_blank())
+
+max_p<-ggplot()+
+  geom_density(aes(x=as.vector(prism_tmax$Tmax_mean_usa), 
+                   fill='Prism'), alpha=0.5)+
+  geom_density(aes(x=as.vector(max_temp_sum$wc2.1_2.5m_bio_10), 
+                   fill='World Clim'), alpha=0.5)+
+  scale_x_continuous('Maximum Temp. '~degree~'C')+
+  scale_fill_manual('Dataset', values=c('black', 'white'))+
+  theme_minimal()+
+  theme(axis.title.y = element_blank(),
+        legend.position = 'top',
+        legend.direction = 'horizontal')
+climdist_leg<-get_legend(max_p)
+plot_grid(climdist_leg, 
+          plot_grid(ppt_p, min_p, max_p +theme(legend.position='none'), 
+                    nrow=1, rel_widths = c(.4,.3,.3)),
+          ncol=1, rel_heights = c(.2,1))
+```
+
+Below, we present the distribution of climate means from watersheds used within this analysis. Remember that PRISM data is only used for watersheds within the contiguous US while WorldClim is only used for watersheds outside the contiguous US (Canada & Mexico).   
+
+```{r distribution of watersheds occupied by anurans, fig.width=6.5, fig.height=2.5, echo=F}
+climate_ws_raw %>% group_by(value_type, watershed.name) %>%
+  slice(1) %>% dplyr::select(-species, -X) %>% 
+  ungroup() %>% 
+  mutate(value_origin=recode(value_origin, 
+                             'huc12'='HUCS & Prism', 
+                             'HYBAS'='HydroBasins\n& World Clim'),
+         value_type=recode(value_type,
+                           'annual ppt'="Precipitation",
+                           'tmax'="Max Temp.",
+                           'tmin'="Min Temp.")) %>%
+  ggplot()+
+  geom_density(aes(x=value, fill=value_origin), alpha=0.6)+
+  scale_fill_manual('Dataset', values=c('black', 'white'))+
+  facet_wrap(~value_type, scales='free', strip.position = 'bottom')+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle=20, hjust=.9),
+        axis.title.x = element_blank(),
+        legend.position='top',
+        strip.placement = 'outside')+
+  ggtitle('Distribution of Watershed Means')
+```
+
+# Check for NA values extracted - points that land on the border
+Sometimes extracts pull NA values from the raster. These are generally areas where the points don't have raster cells below them, or the raster cell has a NA value itself. I think if the NAs constitute a small proportion of the overall area contributing to the mean and standard deviation climate values, the NAs can be ignored.  
+
+```{r check the buffered pts for NAs}
+# pull in all the climate values extracted for each species
+clim_values<-NULL
+for(b in list.files('rcs_results/watershed_climate_means/20201020_run/',
+                    full.name=T, pattern='ppt')){
+  ms<-read.csv(b) 
+  clim_values<-bind_rows(clim_values, ms)
+}
+```
+
+In total, there are `r nrow(clim_values)` areas that have an NA value from the climate rasters. Of these rows, `r nrow(clim_values[clim_values$source=='annua',])` are from the WorldClim rasters while `r nrow(clim_values[clim_values$source=='prism',])` are from the PRISM dataset. There are `r length(unique(clim_values$species))` anuran species that have some of their area of occupancy not covered by the climate rasters. 
+
+```{r table of percent area, echo=F, results='asis'}
+kable(clim_values %>%
+  mutate(dataset=ifelse(source=='prism', 'prism', 'world clim')) %>%
+  group_by(species, dataset) %>%
+  mutate(n_all=n()) %>%
+  filter(is.na(ppt)) %>%
+  summarize(`total pts`=mean(n_all),
+            `total NAs`=n(),
+            `total NA weight (%)`=round(sum(weight)*100,2)) %>%
+  arrange(desc(`total NA weight (%)`)) %>%
+  filter(`total NA weight (%)`>1) %>% dplyr::select(-dataset),
+caption='Species where NAs constitute more than 1% of the area represented by the buffered pts. These areas are all from outside the contiguous US; thus the climate values are pulled from the WorldClim rasters')
+```
+
+Since *Pseudacris feriarum* has such a large percentage of its points as NA (though it also has a low number of points outside the contiguous US), we will use it as an example of how a buffered area might not overlay the raster perfectly.   
+
+```{r p feriarum check bc large}
+# bring in one of the WorldClim climate rasters
+annual_ppt<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_12.tif")
+annual_ppt<-crop(annual_ppt, extent(-180, -45, 0 ,90)) #crop to make extraction quicker
+# bring in the buffered points outside the contiguous US for this species
+Pferiarum<-read_sf('rcs_results/20201019_sp_shp_files/NA_1km/', 
+                   layer='Pseudacris feriarum') %>%
+  st_transform(crs(annual_ppt))
+
+pfer_extract<-raster::extract(annual_ppt, Pferiarum,
+                      na.rm = T, weights = TRUE, 
+                      small = TRUE, method = 'simple', df = TRUE)
+```
+
+```{r pferia map, echo=F, fig.width=6.5, fig.height=4, warning=F, message=F}
+# creating the cropped raster for pretty plotting later
+pferia_ppt<-crop(annual_ppt, extent(c(st_bbox(Pferiarum)[1]-.03,
+                                      st_bbox(Pferiarum)[3]+.03,
+                                      st_bbox(Pferiarum)[2]-.03,
+                                      st_bbox(Pferiarum)[4]+.03)))
+rpts_pferia <- data.frame(rasterToPoints(pferia_ppt))
+
+pf_pts<-st_cast(Pferiarum, 'POLYGON') %>% rowid_to_column()
+
+for(j in c(1,3,4)){
+  assign(paste0('plot_', j),
+         ggplot()+
+           geom_raster(data=rpts_pferia, aes(y=y, x=x, fill=wc2.1_2.5m_bio_12))+
+           geom_sf(data=pf_pts[j,], fill=NA, color='black')+
+  coord_sf(xlim=c(st_bbox(pf_pts[j,])[1], st_bbox(pf_pts[j,])[3]),
+           ylim=c(st_bbox(pf_pts[j,])[2], st_bbox(pf_pts[j,])[4]))+
+    scale_fill_continuous(guide=F, na.value='white')+
+    theme_bw()+
+    theme(axis.title = element_blank(),
+          axis.text = element_text(size=7, angle=20, hjust=.95)))
+}
+plot_grid(plot_1, plot_3, plot_4, nrow = 1)
+```
+
+
+So our extraction is working as expected. Based on the above extraction, *P. feriarum* should have a mean precipitation value of `r pfer_extract %>% summarize(weighted.mean(wc2.1_2.5m_bio_12, weight, na.rm=T)) %>% round(2)`. When we look at the csv we use to calculate the RCS index, we find *P. feriarum*'s mean precipitaiton outside the contiguous US is `r climate_buf_L48 %>% filter(species == 'Pseudacris feriarum') %>% filter(source=='annua') %>% pull(mean_value) %>% round(2)`. It is important to note that we are weighting these variables by area. Thus as long as the areas outside the contiguous US are proportionally smaller than the areas within the contiguous US, less than 1% of the weighted area is NA when calculating these values. 
+
+# Build a histogram of each species' climate values
+
+The way we describe the climate niche breadth using the standard deviation (SD) of the distribution of the climate variable. Ideally, the standard deviation will capture the majority of the distribution and variation within the climate value. The standard deviation is then scaled between 0 & 1 to allow inter-species comparison using the following equation:
+
+$$
+1 - \frac{value_{taxa} - value_{min}}{value_{max}-value_{min}}
+$$
+
+```{r remove species not in analysis, echo=F}
+sp_range_wiL48 <-read.csv('rcs_results/sp_range_within_US.csv') %>% 
+  dplyr::select(-X)
+NAS_exotic<-c('Osteopilus septentrionalis','Xenopus laevis')
+mis_others<-c('Rhinella marina', #invasive around the world
+              'Lithobates fisheri', #taxonomic nightmare
+              'Incilius valliceps') #only native to Mexico
+sp_exclude <- sp_range_wiL48 %>% filter(per_inside_us <= 20.0) %>%
+  pull(scientific_name) %>% c(NAS_exotic, mis_others)
+rm(sp_range_wiL48, NAS_exotic, mis_others)
+```
+
+We'll look at the histograms of 10% of the species, which is approximately 10 species (so it'll actually be `r round(10/92*100, 2)` of the species). These are the species we will look at: `r (s_spp<-climate_ws_raw %>% filter(!(species %in% sp_exclude)) %>% group_by(species) %>% slice(1) %>% ungroup() %>% sample_n(20) %>% pull(species))`.  
+
+Update 11/20: Actually, we are going to print all the histograms for the climate variables. That way I can see if a species has outliers I need to remove.   
+
+The following plots represent the distribution of each climate variable the species experiences based on its area of occurrence. The mean climate value is indicated by the red line while the mean + 1SD & mean - 1SD; this area should represent approximately 68% of the area under the curve.  
+
+## Watershed Climate Values
+
+I don't know why *Anaxyrus boreas* is plotting strangely (half off the page). Hence I plot it below as well. 
+
+```{r histograms, echo=F, fig.width=6.5, fig.height=8.5}
+clim_sds<- climate_ws_raw %>%
+  group_by(species, value_type) %>% 
+  dplyr::summarize(mean_climate=mean(value), sd_of_env_mean=sd(value))
+
+#tutorial: https://www.programmingwithr.com/how-to-make-your-facet-wrap-facet-grid-ggplots-span-across-multiple-pages-in-pdf/ 
+for(i in 1:18){
+  clim_hist<-climate_ws_raw %>% 
+    left_join(clim_sds, by=c('species', 'value_type')) %>%
+    filter(!(species %in% sp_exclude),
+           !(species %in% c("Spea intermontana", "Spea multiplicata"))) %>%
+    #filter(species %in% s_spp) %>%
+    ggplot()+
+    geom_density(aes(x=value), fill='grey')+
+    geom_vline(aes(xintercept = mean_climate - sd_of_env_mean), color='red')+
+    geom_vline(aes(xintercept = mean_climate + sd_of_env_mean), color='red')+
+    geom_vline(aes(xintercept = mean_climate), color='blue')+
+    facet_wrap_paginate(~species+value_type, scales='free', 
+                        nrow=5, ncol=3, page=i)+
+    theme_bw()+
+    theme(strip.text = element_text(size=8.5),
+          axis.text = element_text(size=8))+
+   scale_y_continuous(labels=scales::number_format(accuracy = 0.01))
+  print(clim_hist)
+}
+
+```
+```{r last clim ws plots, echo=F, fig.height=4, fig.width=6.5}
+climate_ws_raw %>% 
+    left_join(clim_sds, by=c('species', 'value_type')) %>%
+    filter(species %in% c("Spea intermontana", "Spea multiplicata")) %>%
+  ggplot()+
+    geom_density(aes(x=value), fill='grey')+
+    geom_vline(aes(xintercept = mean_climate - sd_of_env_mean), color='red')+
+    geom_vline(aes(xintercept = mean_climate + sd_of_env_mean), color='red')+
+    geom_vline(aes(xintercept = mean_climate), color='blue')+
+    facet_wrap(~species+value_type, scales='free')+
+    theme_bw()+
+    theme(strip.text = element_text(size=8.5),
+          axis.text = element_text(size=8))+
+   scale_y_continuous(labels=scales::number_format(accuracy = 0.01))
+```
+
+## Buffered Points Climate Values
+
+The following depicts the weighted density curves (so climate values are weighted by area within each point).
+
+```{r buffered pt climate val species, echo=F, fig.width=6.5, fig.height=8.5}
+clim_values<-NULL
+for(b in list.files('rcs_results/watershed_climate_means/20201020_run/',
+                    full.name=T)){
+  ms<-read.csv(b) 
+  clim_values<-bind_rows(clim_values, ms)
+}
+clim_values_l<-clim_values %>% pivot_longer(cols=c('ppt','tmax', 'tmin')) %>%
+  filter(!is.na(value)) %>% dplyr::select(-X) %>%
+  left_join(climate_buf_L48,  by = c("species", "source", "name")) %>%
+  mutate(new_weight=weight*sumweight)
+
+for(i in 1:18){
+  clim_hist_buf<-clim_values_l %>%
+    filter(!(species %in% sp_exclude),
+           !(species %in% c("Spea intermontana", "Spea multiplicata"))) %>%
+    #filter(species %in% s_spp) %>%
+    dplyr::select(species, name, value, new_weight) %>%
+    left_join(climate_buf, by=c("species", "name")) %>%
+  ggplot()+
+    geom_density(aes(x=value, weight=new_weight), fill='grey')+
+    geom_vline(aes(xintercept = mean_value - sd_value), color='red')+
+    geom_vline(aes(xintercept = mean_value + sd_value), color='red')+
+    geom_vline(aes(xintercept = mean_value), color='blue')+
+    theme_bw()+
+    facet_wrap_paginate(~species+name, scales='free', 
+                        nrow=5, ncol=3, page=i)+
+    theme(strip.text = element_text(size=8.5),
+          axis.text = element_text(size=8))+
+   scale_y_continuous(labels=scales::number_format(accuracy = 0.01))
+  print(clim_hist_buf)
+}
+```
+
+```{r last clim_buf plots, echo=F, fig.height=4, fig.width=6.5}
+clim_values_l %>%
+    filter(species %in% c("Spea intermontana", "Spea multiplicata")) %>%
+    dplyr::select(species, name, value, new_weight) %>%
+    left_join(climate_buf, by=c("species", "name")) %>%
+  ggplot()+
+    geom_density(aes(x=value, weight=new_weight), fill='grey')+
+    geom_vline(aes(xintercept = mean_value - sd_value), color='red')+
+    geom_vline(aes(xintercept = mean_value + sd_value), color='red')+
+    geom_vline(aes(xintercept = mean_value), color='blue')+
+    facet_wrap(~species+name, scales='free')+
+    theme_bw()+
+    theme(strip.text = element_text(size=8.5),
+          axis.text = element_text(size=8))+
+   scale_y_continuous(labels=scales::number_format(accuracy = 0.01))
+```
+
+```{r remove big files, echo=F}
+rm(huc12, usa_l48_geo, hydro12, 
+   prism_tmax, prism_tmin,
+   annual_ppt, max_temp_sum, min_temp_win,
+   clim_values, clim_values_l)
+```

@@ -427,4 +427,9 @@ FWS_spp %>%
   
 # look up these frogs here: https://ecos.fws.gov/ecp/report/species-candidate-removed-or-withdrawn
 #also Rana subaquavocalis 
+
+anuran_genus
+NatGCC_list %>%
+  filter(genus %in% anuran_genus) %>%
+  arrange(States.2015)
   

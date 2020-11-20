@@ -14,10 +14,10 @@ PATH_HUC12 <- '/home/tracidubose/huc12_wgs84_sf.rds'
 PATH_hydrosheds<-'/home/tracidubose/HydroSHEDS/'
 
 #where species shapefiles reside
-PATH_SHP_WS_L48 <- "/home/tracidubose/rcs_results/huc12_sp/"
-PATH_SHP_1km_L48 <- "/home/tracidubose/rcs_results/L48_1km"
-PATH_SHP_WS_NA <- "/home/tracidubose/rcs_results/NA_hydrobasins/"
-PATH_SHP_1km_NA <- "/home/tracidubose/rcs_results/NA_1km"
+PATH_SHP_WS_L48 <- "/home/tracidubose/rcs_results/20201019_sp_shp_files/huc12_sp/"
+PATH_SHP_1km_L48 <- "/home/tracidubose/rcs_results/20201019_sp_shp_files/L48_1km"
+PATH_SHP_WS_NA <- "/home/tracidubose/rcs_results/20201019_sp_shp_files/NA_hydrobasins/"
+PATH_SHP_1km_NA <- "/home/tracidubose/rcs_results/20201019_sp_shp_files/NA_1km"
 
 #climate files
 # PRISM files from Sam Silknetter (in press)
@@ -28,10 +28,10 @@ prism_tmax <- raster("/home/tracidubose/prism_files/Tmax_mean_usa.tif")
 NW_hemisphere<-extent(-180, -45, 0 ,90) #crop the raster to NW hemisphere
 annual_ppt<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_12.tif")
 annual_ppt<-crop(annual_ppt, NW_hemisphere)
-max_temp_aug<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_5.tif")
-max_temp_aug<-crop(max_temp_aug, NW_hemisphere)
-min_temp_jan<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_6.tif")
-min_temp_jan<-crop(min_temp_jan, NW_hemisphere)
+max_temp_sum<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_10.tif")
+max_temp_sum<-crop(max_temp_sum, NW_hemisphere)
+min_temp_win<-raster("/home/tracidubose/WorldClim_data/wc2.1_2.5m_bio_11.tif")
+min_temp_win<-crop(min_temp_win, NW_hemisphere)
 crs.worldclim<-st_crs(annual_ppt)
 #where the files end up:
 PATH_ws_climate<-'/home/tracidubose/rcs_results/watershed_climate_means/'
@@ -64,7 +64,7 @@ st_crs(HUC12_All)
 
 hucIDlong<-NULL
 for(i in 1:length(FILES_watershed_L48)){
-  shp<-st_read(paste0(PATH_SHP_WS_L48 , "/", FILES_watershed_L48[i]),
+  shp<-st_read(PATH_SHP_WS_L48 , sub('.shp', '', FILES_watershed_L48[i]),
                quiet = T)
   hucIDlong.one<-data.frame(taxa=rep(sub(".shp", "", FILES_watershed_L48[i]), 
                                      length(shp$wtrshd_)),
@@ -79,12 +79,13 @@ huc12_red<-HUC12_All %>%
 
 #convert this to a binary matrix for easy multiplication later
 hucIDbin <- hucIDlong %>% 
-  mutate(presence=1) %>%
+  mutate(watershed_ID = as.character(paste(watershed_ID)),
+         presence=1) %>%
   pivot_wider(names_from='taxa', values_from = 'presence', values_fill=list(presence = 0))
 
 hydroIDlong<-NULL
 for(i in 1:length(FILES_watershed_NA)){
-  shp<-st_read(paste0(PATH_SHP_WS_NA , "/", FILES_watershed_NA[i]),
+  shp<-st_read(PATH_SHP_WS_NA , sub('.shp', '', FILES_watershed_NA[i]),
                quiet = T)
   hydroIDlong.one<-data.frame(taxa=rep(sub(".shp", "", FILES_watershed_NA[i]), 
                                      length(shp$wtrshd_)),
@@ -98,8 +99,7 @@ Hydro_all <- st_read(dsn=PATH_hydrosheds, layer='hybas_na_lev12_v1c')
 st_crs(Hydro_all)
 hydro_red<-Hydro_all %>%
   filter(HYBAS_ID %in% hydroIDlong$watershed_ID)
-
-ggplot()+geom_sf(data=hydro_red)
+#ggplot()+geom_sf(data=hydro_red)
 
 hydroIDbin <- hydroIDlong %>% 
   mutate(presence=1) %>%
@@ -132,17 +132,18 @@ extract_mean_env <- function(env.raster,
 }
 
 # running the function with either the hydrobasins + worldclim or huc12 + prism
+# ONLY NEED TO RUN THIS ONCE! THE HUCS TAKE A LONG TIME
 WS_NA_ppt<-extract_mean_env(env.raster=annual_ppt, 
                             hucs=hydro_red, 
                             ID.col="HYBAS_ID",
                             write.file=T, 
                             path=PATH_ws_climate)
-WS_NA_tmax<-extract_mean_env(env.raster=max_temp_aug, 
+WS_NA_tmax<-extract_mean_env(env.raster=max_temp_sum, 
                             hucs=hydro_red, 
                             ID.col="HYBAS_ID",
                             write.file=T, 
                             path=PATH_ws_climate)
-WS_NA_tmin<-extract_mean_env(env.raster=min_temp_jan, 
+WS_NA_tmin<-extract_mean_env(env.raster=min_temp_win, 
                             hucs=hydro_red, 
                             ID.col="HYBAS_ID",
                             write.file=T, 
@@ -165,14 +166,17 @@ WS_L48_tmin<-extract_mean_env(env.raster=prism_tmin,
                               path=PATH_ws_climate)
 
 # pull in the extracted climate means
-for(k in list.files(PATH_ws_climate)){
-  assign(sub('extract_output_', '', sub('.csv', '', k)), 
+for(k in list.files(PATH_ws_climate, pattern='extract')){
+  assign(sub('extracted_', '', sub('.csv', '', k)), 
          read.csv(paste0(PATH_ws_climate, k),
-                  row.names = 1,
-                  colClasses = c(watershed.name='character',
-                                 rep('numeric',2))))
-} #warnings ok to ignore
+                  row.names = 1, stringsAsFactors = F) %>%
+           mutate(watershed.name=ifelse(nchar(watershed.name)==11, 
+                                      paste0('0', watershed.name), watershed.name)))
+} 
 
+#check the watershed IDs still match (if character ->, often drop the leading 0)
+which(nchar(huc12_output_prism_ppt$watershed.name)==11)
+which(!(hydroIDbin$watershed_ID %in% HYBAS_ID_annual_ppt$watershed.name))
 
 # use matrix algebra to build a matrix to calculate standard of deviation
 # the binary matrix should contain 0 where sp is not present and mean environmental values where sp is present
@@ -182,15 +186,17 @@ hucIDbin_ordered<-hucIDbin[order(hucIDbin$watershed_ID),] %>%
 hydroIDbin_ord<-hydroIDbin[order(hydroIDbin$watershed_ID),] %>%
   dplyr::select(-watershed_ID)
 #list of huc12 climate dataframes
-climate_means<-sub('extract_output_', '', sub('.csv', '', list.files(PATH_ws_climate))) 
+climate_means<-sub('extracted_', '', sub('.csv', '', list.files(PATH_ws_climate, pattern='extract'))) 
 clim_var<-c('mean','sd')
 for(i in climate_means){
   climate_df<-get(i)
   if(substr(i,1,3)=="huc"){
-    print(nrow(hucIDbin_ordered) == nrow(climate_df))
+    climate_df<-climate_df %>% 
+      filter(watershed.name %in% hucIDbin$watershed_ID)
+    print(nrow(hucIDbin_ordered) == nrow(climate_df)) #check to make sure number of rows match
     climate_binmat<-climate_df[order(climate_df$watershed.name),2] * hucIDbin_ordered
   }
-  if(substr(i,1,3)=='hyd'){
+  if(substr(i,1,3)=='HYB'){
     print(nrow(hydroIDbin_ord) == nrow(climate_df))
     climate_binmat<-climate_df[order(climate_df$watershed.name),2] * hydroIDbin_ord
   }
@@ -200,19 +206,21 @@ for(i in climate_means){
     bind_cols(watershed.name=climate_df[order(climate_df$watershed.name),1]) %>%
     pivot_longer(-watershed.name, names_to='species') %>%
     filter(value!=0) %>%
-    mutate(value_origin=substr(i,1,5),
+    mutate(watershed.name=as.character(watershed.name),
+           value_origin=substr(i,1,5),
            value_type=case_when(grepl('ppt', names(climate_df)[2])| grepl('bio_12', names(climate_df)[2]) ~ 'annual ppt',
-                                grepl('Tmax', names(climate_df)[2])| grepl('bio_5', names(climate_df)[2]) ~ 'tmax',
-                                grepl('Tmin', names(climate_df)[2])| grepl('bio_6', names(climate_df)[2]) ~ 'tmin')))
+                                grepl('Tmax', names(climate_df)[2])| grepl('bio_10', names(climate_df)[2]) ~ 'tmax',
+                                grepl('Tmin', names(climate_df)[2])| grepl('bio_11', names(climate_df)[2]) ~ 'tmin')))
 }
 
-huc12_prism_ppt_taxa_sum
-huc12_prism_tmax_taxa_sum
+head(huc12_output_prism_ppt_taxa_sum)
+head(HYBAS_ID_annual_ppt_taxa_sum)
 
 # Mean and Standard Deviation Calculation
 taxa_climate_values_raw<-bind_rows(mget(paste0(climate_means, '_taxa_sum')))
 write.csv(taxa_climate_values_raw, paste0('/home/tracidubose/rcs_results/taxa_ws_climate_values',
                                    format(Sys.Date(), "%Y%m%d"),'.csv'))
+#supplementary information
 taxa_climate_values_raw %>%
   group_by(species, value_origin) %>% tally() %>%
   mutate(n=n/3) %>%
@@ -222,18 +230,34 @@ taxa_climate_values_raw %>%
   group_by(species, value_type) %>%
   dplyr::summarize(mean=mean(value), sd=sd(value))
 
+taxa_climate_values_raw %>%
+  group_by(value_type, value_origin) %>%
+  ggplot()+
+  geom_density(aes(x=value, fill=value_origin), alpha=.5)+
+  #geom_vline(aes(xintercept=mean(value), group=value_type))+
+  facet_wrap(~value_type, scales='free')+
+  theme_bw() + theme(#axis.text.x = element_text(angle=20),
+                     axis.title.x=element_text(size=-1),
+                     legend.position = 'bottom')
+ggsave('/home/tracidubose/rcs_results/figures/ws_climate_var_dist.jpg',
+       width=6, height=3)
 
 #### Buffered Pts Climate Mean Calculations ####
 #Extract environmental data from each species 1km buffer AOO. 
 extract_mean_env_buff <- function(env.raster, 
                                   variable,
                                   spp, 
+                                  native_range=F,
                                   buff_file_folder,
                                   write.f=T,
                                   output_path){
   
-  spp_BUF <- read_sf(buff_file_folder, spp) %>% #load the buffered shape file
-    st_transform(st_crs(env.raster)) #transform to match raster
+  spp_BUF <- read_sf(buff_file_folder, spp) #load the buffered shape file
+  if(native_range==T){
+    spp_BUF<-st_intersection(iucn_anuran[iucn_anuran$binomial==spp,], spp_BUF) %>%
+      st_union() %>% st_as_sf()
+  }
+  spp_BUF <-  st_transform(spp_BUF, st_crs(env.raster)) #transform to match raster
   if(nrow(spp_BUF)!=0){
   # extract the values of interest from the raster for each polygon
   env.values<-raster::extract(env.raster, spp_BUF, 
@@ -249,28 +273,47 @@ extract_mean_env_buff <- function(env.raster,
     print(paste(spp, 'has no area outside of the contiguous US'))
   }
 }
-PATH_buff_climate_val<-'/home/tracidubose/rcs_results/watershed_climate_means/sp_buffer_raw_values/'
-taxa.comp
-anuran.taxa[1:4]
 
-for(u in anuran.taxa[5:length(anuran.taxa)]){
-  extract_mean_env_buff(env.raster = annual_ppt, variable='ppt', spp=u, 
+
+
+iucn_anuran<-read_sf('/home/tracidubose/ANURA/', 'ANURA') %>% 
+  st_transform(., crs.albers)
+#note: when native = T, will get a lot of warnings for two taxa with native ranges not reported at IUCN:
+#Acris blanchardi & Lithobates kauffauldi
+
+PATH_buff_climate_val<-'/home/tracidubose/rcs_results/watershed_climate_means/20201020_run/'
+taxa.toNOTdo<-gsub('\\_.*','', list.files(PATH_buff_climate_val)) %>%
+  as_tibble() %>%
+  count(value) 
+
+taxa.toNOTdo %>% filter(!(n %in% c(6,3)))
+taxa.todo<-anuran.taxa[!(anuran.taxa %in% taxa.toNOTdo$value)]
+taxa.todo
+
+grep('woodhou', list.files(PATH_buff_climate_val), value=T)
+
+
+for(u in 'Anaxyrus woodhousii'){
+  extract_mean_env_buff(env.raster = annual_ppt, variable='ppt', spp=u, native_range = F,
                         buff_file_folder = PATH_SHP_1km_NA, output_path = PATH_buff_climate_val)
-  extract_mean_env_buff(env.raster = prism_ppt, variable='ppt', spp=u,
+  extract_mean_env_buff(env.raster = prism_ppt, variable='ppt', spp=u, native_range = F,
+                        buff_file_folder = PATH_SHP_1km_L48, output_path = PATH_buff_sclimate_val)
+  
+  extract_mean_env_buff(env.raster = min_temp_win, variable='tmin', spp=u, native_range = F,
+                        buff_file_folder = PATH_SHP_1km_NA, output_path = PATH_buff_climate_val)
+  extract_mean_env_buff(env.raster = prism_tmin, variable='tmin', spp=u, native_range = F,
                         buff_file_folder = PATH_SHP_1km_L48, output_path = PATH_buff_climate_val)
-  extract_mean_env_buff(env.raster = min_temp_jan, variable='tmin', spp=u, 
+  
+  extract_mean_env_buff(env.raster = max_temp_sum, variable='tmax', spp=u, native_range = F,
                         buff_file_folder = PATH_SHP_1km_NA, output_path = PATH_buff_climate_val)
-  extract_mean_env_buff(env.raster = prism_tmin, variable='tmin', spp=u, 
-                        buff_file_folder = PATH_SHP_1km_L48, output_path = PATH_buff_climate_val)
-  extract_mean_env_buff(env.raster = max_temp_aug, variable='tmax', spp=u,
-                        buff_file_folder = PATH_SHP_1km_NA, output_path = PATH_buff_climate_val)
-  extract_mean_env_buff(env.raster = prism_tmax, variable='tmax', spp=u, 
+  extract_mean_env_buff(env.raster = prism_tmax, variable='tmax', spp=u, native_range = F,
                         buff_file_folder = PATH_SHP_1km_L48, output_path = PATH_buff_climate_val)
   
 }
 
+
 clim_values<-NULL
-for(b in list.files('/home/tracidubose/rcs_results/watershed_climate_means/sp_buffer_raw_values',
+for(b in list.files(PATH_buff_climate_val,
                     full.name=T)){
   ms<-read.csv(b)
   clim_values<-bind_rows(clim_values, ms)
@@ -283,8 +326,9 @@ clim_values %>% dplyr::select(-X,-ID) %>%
   group_by(species, source, name) %>%
   dplyr::summarize(sumweight=sum(weight)) #some of them have weights lower than 1 (NA values)
   
-(aoos<-read.csv('/home/tracidubose/rcs_results/AOOs_raw_202009.csv') %>%
-  filter(grepl('1km', area.type)) %>%
+(aoos<-read.csv('/home/tracidubose/rcs_results/AOOs_raw_20201019.csv') %>%
+  filter(!(area.sqkm==0 & scientific_name %in% c('Acris blanchardi','Lithobates kauffeldi')),
+         grepl('1km', area.type)) %>%
   group_by(scientific_name) %>%
   mutate(prop.area=area.sqkm/sum(area.sqkm)) %>%
   dplyr::select(-X, -DFdif))
