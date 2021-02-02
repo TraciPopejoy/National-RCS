@@ -173,9 +173,6 @@ ws_esa_k_l48<-kruskal.test(formula=RCS_WS~`Endangered Species Act`,
 ws_iucn_k_l48<-kruskal.test(formula=RCS_WS~`IUCN Red List`,
                         data=RCS_index_con_icn[RCS_index_con_icn$spatial_extent=="native L48 range",])
 
-library(betareg)
-summary(betareg(RCS_WS~`IUCN Red List`*spatial_extent, data=RCS_index_con_icn))
-
 # making a table of kruskal wallis outputs
 kruskal_res<-sapply(list(ws_esa_k, ws_swap_k, ws_iucn_k,
                          b_esa_k, b_swap_k, b_iucn_k,
@@ -359,24 +356,55 @@ subspp_occ <- occurance.data %>%
 unique(subspp_occ$subspp)
 
 # which are likely under served ----
+# ESA top 30th percentile
 RCS_index_con %>%
   filter(`Endangered Species Act`=="Endangered",
          spatial_extent=='entire native NA range') %>%
   pull(RCS_WS) %>% quantile(.7)
 #cut off of 0.865 for 50%
 #cut off of 0.967 for 75%
-
-# 20 species underserved if use 50%
-round(17/92*100,2) #~18.5% of taxa
+# underserved species based on top 30th percentile
 RCS_index_con %>% filter(RCS_WS >= .946,
                          `Endangered Species Act` != 'Endangered',
                          spatial_extent=='entire native NA range')
+#if only conserve same %
+RCS_index_con %>%
+  filter(spatial_extent == 'entire native NA range') %>%
+  arrange(desc(RCS_WS)) %>%
+  slice(1:5) %>% select(species, RCS_WS, `Endangered Species Act`) 
 
-# 17 species underserved if use 50%
-round(17/92*100,2) #~18.5% of taxa
-RCS_index_con %>% filter(RCS_WS >= 0.8650,
-                         `Endangered Species Act` != 'Endangered',
-                         spatial_extent=='entire native NA range') 
+# IUCN top 30th percentile
+RCS_index_con %>%
+  filter(`IUCN Red List`=="Endangered",
+         spatial_extent=='entire native NA range') %>%
+  pull(RCS_WS) %>% quantile(.7) #0.9202
+# underserved species based on top 30th percentile
+RCS_index_con %>% filter(RCS_WS >= .9202,
+                         `IUCN Red List` != 'Endangered',
+                         spatial_extent=='entire native NA range')
+#if only conserve same %
+RCS_index_con %>%
+  filter(spatial_extent == 'entire native NA range') %>%
+  arrange(desc(RCS_WS)) %>%
+  slice(1:7) %>% select(species, RCS_WS, `IUCN Red List`)
+
+# State top 30th percentile
+RCS_index_con %>%
+  filter(`Species of Greatest\nConserv. Need`=='in >1 SWAP',
+         spatial_extent=='entire native NA range') %>%
+  pull(RCS_WS) %>% quantile(.7) #.8359
+# underserved species based on top 30th percentile
+RCS_index_con %>% filter(RCS_WS >= .8359,
+                         `Species of Greatest\nConserv. Need`!='in >1 SWAP',
+                         spatial_extent=='entire native NA range')
+#if only conserve same %
+RCS_index_con %>%
+  filter(spatial_extent == 'entire native NA range') %>%
+  arrange(desc(RCS_WS)) %>%
+  slice(1:7) %>% select(species, RCS_WS, `IUCN Red List`)
+
+
+
 
 ### which species are unlisted but high RCS ----
 esa_spp_nc<-RCS_index_con %>%
@@ -432,4 +460,48 @@ anuran_genus
 NatGCC_list %>%
   filter(genus %in% anuran_genus) %>%
   arrange(States.2015)
-  
+
+# Investigating classification tree ----
+library(rpart)
+names(RCS_index); names(RCS_index_con)
+class_df<-RCS_index %>%
+  bind_rows(read.csv(PATH_RCS_L48_index)) %>%
+  right_join(RCS_index_con) %>% as_tibble() %>%
+  select(-X, -buffer, -watershed, -rank_WS,
+         -rank_buff, -log10_buff_sqkm, -log10_WS_sqkm)
+tyees<-rpart(`IUCN Red List` ~ AOO_BUF_adj + CS_BUF_adj,
+             data=class_df)
+plot(tyees)
+text(tyees)
+
+library(mda)
+# Fit the model
+model <- fda(`IUCN Red List` ~ buff_AOO_ind + ppt_buf.CS+tmax_buf.CS+tmin_buf.CS,
+             data=class_df)
+# Make predictions
+predicted.classes <- model %>% predict(class_df)
+# Model accuracy
+mean(predicted.classes == class_df$`IUCN Red List`)
+
+# Genera description ----
+ord_gen<-RCS_index %>%
+  mutate(genera=gsub("\\ .*",'',species)) %>%
+  group_by(genera) %>% summarise(medRCS=median(RCS_WS)) %>%
+  arrange(desc(medRCS)) %>% pull(genera)
+RCS_index %>% 
+  mutate(genera=gsub("\\ .*",'',species)) %>%
+  group_by(genera) %>%
+  mutate(n_sp=n(),
+         GenFac=factor(genera, levels=ord_gen)) %>%
+  ggplot()+
+  geom_point(aes(x=GenFac, y=RCS_WS), 
+             position=position_jitter(width=0.2), alpha=0.2)+
+  geom_boxplot(aes(x=GenFac, y=RCS_WS), alpha=0.5,
+               outlier.color = NA)+
+  geom_text(data=. %>% slice(1),
+            aes(x=GenFac, y=1.05, label=n_sp))+
+  scale_y_continuous("Watershed RCS", limits=c(0,1.06))+
+  scale_x_discrete("Genus")+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle=35, size=9, hjust=.9, face='italic'))
+ggsave('rcs_results/figures/Fig3_genbox.jpg', width=6, height=4)
