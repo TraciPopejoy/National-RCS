@@ -130,7 +130,7 @@ RCS_index_con %>%
              scales = 'free')+
   theme_cowplot()+
   theme(axis.text.x = element_text(size=8, angle=30, hjust=.9),
-        legend.position = 'none',)
+        legend.position = 'none')
 
 # RCS & conservation status quantification ----
 # differences in mean between conservation status
@@ -173,7 +173,7 @@ ws_esa_k_l48<-kruskal.test(formula=RCS_WS~`Endangered Species Act`,
 ws_iucn_k_l48<-kruskal.test(formula=RCS_WS~`IUCN Red List`,
                         data=RCS_index_con_icn[RCS_index_con_icn$spatial_extent=="native L48 range",])
 
-# making a table of kruskal wallis outputs
+# Table S2: kruskal wallis outputs ----
 kruskal_res<-sapply(list(ws_esa_k, ws_swap_k, ws_iucn_k,
                          b_esa_k, b_swap_k, b_iucn_k,
                          ws_esa_k_l48, ws_swap_k_l48, ws_iucn_k_l48,
@@ -194,7 +194,6 @@ dunn.test(d_test_data$RCS_WS,
           d_test_data$`IUCN Red List`,
           method="bonferroni", alpha=0.1)
 
-
 kruskal_res %>% group_by(data.name, grain.size) %>%
   pivot_wider(names_from = 'spatial_extent', values_from='p') %>%
   summarize(`entire range`=mean(`entire range`, na.rm=T),
@@ -213,7 +212,7 @@ kruskal_res %>% group_by(data.name, grain.size) %>%
         strip.placement = 'outside',
         strip.background = element_rect(fill=NA))
 
-#plot for mean differences
+#Figure 2: mean differences among conservation status ----
 plot_common_elements<-ggplot(data=RCS_index_con)+
   scale_x_discrete("")+
   scale_color_manual(values=c('darkgrey','lightgrey'),
@@ -290,7 +289,7 @@ plot_grid(plot_esa_ws, plot_sgcn_ws, plot_iucn_ws,
 ggsave(paste0('rcs_results/figures/RCS_con_means', format(Sys.Date(),'%Y%m%d'),'.jpg'), 
        width=6, height=6)
 
-# Table of N in each group ---
+# Table 1: N in each group ----
 RCS_index_con %>%
   filter(spatial_extent=='entire native NA range') %>%
   select(species, `Endangered Species Act`, 
@@ -307,7 +306,7 @@ RCS_index_con %>%
   filter(spatial_extent=='entire native NA range',
          RCS_WS >= 0.946)
 
-# Table of Median results ---
+# Table 2: kruskal wallis median results ----
 RCS_index_con %>% 
   mutate(spatial_extent=recode(spatial_extent, 
                                'entire native NA range'='entire range',
@@ -448,10 +447,17 @@ View(FWS_spp)
 
 FWS_spp %>% count(ESA.Listing.Status) %>% arrange(desc(n))
 
-FWS_spp %>% 
-  mutate(recode=) %>% #fix some taxa names
-  left_join(RCS_Data, by=c('sname'='species')) %>% 
-  select(sname, ESA.Listing.Status, RCS_WS) 
+FWS_spp %>% filter(ESA.Listing.Status!="Resolved Taxon") %>%
+  mutate(snam_fix=recode(sname,
+                          "Lithobates cascadae"= "Rana cascadae",
+                         "Rana areolata sevosa"  = "Lithobates sevosus"  , 
+                         "Rana yavapaiensis"= "Lithobates yavapaiensis",
+                         "Rana subaquavocalis" = "Lithobates subaquavocalis",
+                         "Rana tarahumarae" = "Lithobates tarahumarae",
+                         "Rana aurora aurora" = "Rana aurora"
+                         )) %>% #fix some taxa names
+  left_join(RCS_index, by=c('snam_fix'='species')) %>% 
+  select(snam_fix, ESA.Listing.Status, RCS_WS) %>% View()
   
 # look up these frogs here: https://ecos.fws.gov/ecp/report/species-candidate-removed-or-withdrawn
 #also Rana subaquavocalis 
@@ -461,38 +467,23 @@ NatGCC_list %>%
   filter(genus %in% anuran_genus) %>%
   arrange(States.2015)
 
-# Investigating classification tree ----
-library(rpart)
-names(RCS_index); names(RCS_index_con)
-class_df<-RCS_index %>%
-  bind_rows(read.csv(PATH_RCS_L48_index)) %>%
-  right_join(RCS_index_con) %>% as_tibble() %>%
-  select(-X, -buffer, -watershed, -rank_WS,
-         -rank_buff, -log10_buff_sqkm, -log10_WS_sqkm)
-tyees<-rpart(`IUCN Red List` ~ AOO_BUF_adj + CS_BUF_adj,
-             data=class_df)
-plot(tyees)
-text(tyees)
-
-library(mda)
-# Fit the model
-model <- fda(`IUCN Red List` ~ buff_AOO_ind + ppt_buf.CS+tmax_buf.CS+tmin_buf.CS,
-             data=class_df)
-# Make predictions
-predicted.classes <- model %>% predict(class_df)
-# Model accuracy
-mean(predicted.classes == class_df$`IUCN Red List`)
-
-# Genera description ----
+# Figure 4: Genera description ----
 ord_gen<-RCS_index %>%
   mutate(genera=gsub("\\ .*",'',species)) %>%
   group_by(genera) %>% summarise(medRCS=median(RCS_WS)) %>%
   arrange(desc(medRCS)) %>% pull(genera)
-RCS_index %>% 
+taxa_table<-read.csv('./data/anuran_occ_all20200708.csv') %>%
+  arrange(source) %>%
+  group_by(final.taxa) %>% slice(1) %>% 
+  select(family, final.taxa) %>% 
+  mutate(family=case_when(final.taxa=="Lithobates kauffeldi"~"Ranidae",
+                          T~family))
+oh<-RCS_index %>% 
   mutate(genera=gsub("\\ .*",'',species)) %>%
   group_by(genera) %>%
   mutate(n_sp=n(),
          GenFac=factor(genera, levels=ord_gen)) %>%
+  left_join(taxa_table, by=c('species'='final.taxa')) %>% 
   ggplot()+
   geom_point(aes(x=GenFac, y=RCS_WS), 
              position=position_jitter(width=0.2), alpha=0.2)+
@@ -502,6 +493,65 @@ RCS_index %>%
             aes(x=GenFac, y=1.05, label=n_sp))+
   scale_y_continuous("Watershed RCS", limits=c(0,1.06))+
   scale_x_discrete("Genus")+
+  facet_wrap(~family, scales='free_x', strip.position='bottom', nrow=1)+
   theme_cowplot()+
-  theme(axis.text.x = element_text(angle=35, size=9, hjust=.9, face='italic'))
-ggsave('rcs_results/figures/Fig3_genbox.jpg', width=6, height=4)
+  theme(axis.text.x = element_text(angle=30, size=9, hjust=.9, face='italic'),
+        axis.text.y = element_text(size=9),
+        axis.title.x = element_text(size=10),
+        axis.title.y=element_text(size=10),
+        strip.background = element_rect(fill=NA),
+        strip.text=element_text(size=7))
+
+#tutorial https://stackoverflow.com/questions/52341385/how-to-automatically-adjust-the-width-of-each-facet-for-facet-wrap
+library(grid)
+ohp = ggplot_gtable(ggplot_build(oh))
+#gtable::gtable_show_layout(ohp)
+# get gtable columns corresponding to the facets (5 & 9, in this case)
+facet.columns <- ohp$layout$l[grepl("panel", ohp$layout$name)]
+
+# get the number of unique x-axis values per facet (1 & 3, in this case)
+x.var <- sapply(ggplot_build(oh)$layout$panel_scales_x,
+                function(l) length(l$range$range))
+
+# change the relative widths of the facet columns based on
+# how many unique x-axis values are in each facet
+ohp$widths[facet.columns] <- ohp$widths[facet.columns] * x.var
+grid.draw(ohp)
+ggsave('rcs_results/figures/Fig3_genbox_new.jpg', width=6.5, height=4)
+
+# Figure S2 area and state swaps -----
+taxa_joiner<-read.csv('data/AnuranTaxRef_20200708.csv')
+taxa_joiner %>% filter(grepl("Dryo", final.taxa))
+as.tibble(taxa_joiner)
+nswap_df<-read.delim(PATH_NatSGCN, 
+           sep="|", header=T, stringsAsFactors = F) %>%
+  as_tibble() %>%
+  filter(Taxonomic.Group=="Amphibians") %>%
+  dplyr::select(-Taxonomic.Group) %>% 
+  #renaming columns for ease of use
+  rename(scientific_name='Scientific.Name', nStates_2005='X..of.States.2005',
+         nStates_2015='X..of.States.2015') %>%
+  right_join(taxa_joiner, by=c('scientific_name'='species')) %>%
+  select(scientific_name, tax, nStates_2015, final.taxa) %>%
+  right_join(RCS_index, by=c('final.taxa'='species')) %>%
+  mutate(nStates=as.numeric(nStates_2015)) %>%
+  filter(!is.na(nStates)) %>%
+  select(scientific_name, final.taxa, watershed, RCS_WS, SpFac, nStates) %>%
+  mutate(cl=ifelse(nStates==0, "Not Listed", "Listed")) %>%
+  filter(!duplicated(final.taxa))
+library(ggrepel)
+ggplot(mapping=aes(x=nStates, y=watershed))+
+  geom_point(data=nswap_df, aes(size=RCS_WS, color=cl, shape=cl), alpha=0.5)+
+  geom_text_repel(data=nswap_df %>% filter(nStates>10),
+                  aes(label=final.taxa), size=3)+
+  scale_y_log10(expression("Area of Occupancy, km"^ 2),
+                breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x)))+
+  scale_x_continuous("Times listed on a SWAP")+
+  scale_shape_manual(values=c(16,18), guide=F)+
+  scale_color_manual(values=c("grey","black"), guide=F)+
+  scale_size_continuous(guide=F)+
+  theme_cowplot()
+ggsave("rcs_results/figures/FigS2_swap_aoo.jpg", width=4, height=4)
+
+RCS_index %>% filter(!(species %in% nswap_df$final.taxa)) %>% pull(species) 
