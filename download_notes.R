@@ -1,81 +1,131 @@
 library(rgbif); library(tidyverse); library(sf)
+library(CoordinateCleaner) #to remove sea coordinates
 user="tracidubose" # GBIF user name
 pwd="anuran4eva" # GBIF password
 email="tracipdubose@gmail.com" # your email
-#2427616  #Acris crepitans
-# 952 #Anura
-gbif_download = occ_download(
-  pred("taxonKey",  2427616), 
-  pred("hasCoordinate", TRUE), #step 2
-  pred("hasGeospatialIssue", FALSE), #partial step 3
-  pred_not(pred("issue", "IDENTIFIED_DATE_UNLIKELY")), #step 3
-  pred_not(pred("issue", "RECORDED_DATE_MISMATCH")), #step 3
-  pred_notnull("country"), #step 4
-  pred("continent","North America"), #attempt at step 5
-  pred_lte("eventDate", "2019-12-25"),
-  format = "SIMPLE_CSV",
-  user=user,pwd=pwd,email=email
-)
-occ_download_wait(gbif_download)
-occ_download_get(gbif_download[1], path = "./data")
-unzip("./data/0204573-200613084148143.zip",
-      exdir="data")
-acrep_occ<-read_tsv("./data/0204573-200613084148143.csv")
 
+# don't pull down occurrences for species I'm not going to use ----
+# excluding those with < 20% range in US
+sp_range_wiL48 <-read.csv('rcs_results/sp_range_within_US.csv') %>% 
+  dplyr::select(-X)
+# removing exotics based on NIAS
+NAS_exotic<-c('Osteopilus septentrionalis','Xenopus laevis')
+# others not looking into
+mis_others<-c('Rhinella marina', #invasive around the world
+              'Lithobates fisheri', #taxonomic nightmare
+              'Incilius valliceps') #only native to Mexico
+sp_exclude <- sp_range_wiL48 %>% filter(per_inside_us <= .200) %>%
+  pull(scientific_name) %>% c(NAS_exotic, mis_others)
+sp_exclude
 
-# old occurrence loss information
+# old occurrence loss information ----
 # all species info here: https://docs.google.com/spreadsheets/d/1D4QoZGxqvGtTrCSsDcZIsS--QHWQA__eyfiiw21sfE8/edit#gid=1759593941
-# Start:30787	
-# after step 2: 11728
-# after step 3: 11515
-# after step 4: 11515
-# after step 5: 11489
-# after step 6: 2876
+orig_filt<-read.csv("C:/Users/Owner/Downloads/Occurrence Record Tracksheet - ALL SPECIES.csv")
+names(orig_filt) <- orig_filt[1,]
+orig_filt<-orig_filt[-c(1,110:114),-c(9:12)]
 
-#theoretically, we should have same number of occurrences at step 5
-nrow(acrep_occ) # more because of september 2020 to dec 2020?
-library(lubridate)
-acrep_occ %>%
-  filter(eventDate <= ymd("2020-09-05")) %>% nrow() # apparently not
-#complete step 6
-acrep_occ %>%
+orig_filt<-orig_filt %>% 
+  mutate(tax=paste0(substr(Species,1,1),'.',gsub(".*? ","",Species))) %>%
+  left_join(anuran.taxa.table, by='tax') %>% 
+  filter(!is.na(final.taxa),
+         !(species %in% sp_exclude)) %>%
+  select(Species, final.taxa, `5`,`6`) %>%
+  arrange(desc(`5`)) %>%
+  filter(!duplicated(final.taxa))
+
+for(i in 1:nrow(orig_filt)){orig_filt$roll_occ[i]<-sum(orig_filt[1:i,3])}
+head(orig_filt)
+
+# get gbif species keys ----
+anuran.gbif.taxa<-NULL
+for(u in 1:nrow(sp_range_wiL48)){
+  anuran.gbif.taxa1<-name_backbone(name=sp_range_wiL48[u,1], 
+                                   rank='species', kingdom='animals')
+  anuran.gbif.taxa<-bind_rows(anuran.gbif.taxa1, anuran.gbif.taxa)
+}
+anuran.gbif.taxa<-anuran.gbif.taxa %>%
+  filter(!(species %in% sp_exclude), #remove species not interested in 
+         !duplicated(speciesKey)) %>% #remove duplicated species to not collect twice
+  left_join(orig_filt, by=c('canonicalName'='final.taxa')) %>% #order to optimize download
+  arrange(desc(`5`)) %>%
+  filter(!duplicated(speciesKey))
+
+View(anuran.gbif.taxa %>% select(species, `5`,roll_occ) %>% left_join(occ_count))
+
+# set up a four loop to pull down occ (> 100k occ) ----
+# automate pulling from species list
+ind_mat<-matrix(c(1,3,4,11,12,24,25,92), ncol=2, byrow = T)
+anuran_occ<-NULL #where all occ kept eventually
+gbif_codes<- NULL #keep the download codes
+
+for(j in 1:5){
+  gbif_download = occ_download(
+    #step 1 - get occ for a species
+    pred_in("taxonKey",  anuran.gbif.taxa$speciesKey[ind_mat[j,1]:ind_mat[j,2]]), 
+    pred("hasCoordinate", TRUE), #step 2
+    pred("hasGeospatialIssue", FALSE), #partial step 3
+    pred_not(pred("issue", "IDENTIFIED_DATE_UNLIKELY")), #step 3
+    pred_not(pred("issue", "RECORDED_DATE_MISMATCH")), #step 3
+    pred_notnull("country"), #step 4
+    pred_in("country",c("US","MX","CA")), #attempt at step 5
+    pred_lte("eventDate", "2019-12-25"),
+    format = "SIMPLE_CSV",
+    user=user,pwd=pwd,email=email)
+  
+  occ_download_wait(gbif_download) 
+  occ_download_get(gbif_download[1], path = "./data")
+  unzip(paste0("./data/", gbif_download[1],".zip"), exdir="data")
+  occ1<-read_tsv(paste0("./data/", gbif_download[1],".csv"),
+                 col_types="cccccccccccccccccccicnnnnnnnnTnnnccccccccTcccccTcc")
+  
+  anuran_occ<-bind_rows(anuran_occ, occ1)
+  gbif_codes<-append(gbif_codes, gbif_download[1])
+}
+
+doublecheck<-NULL
+for(k in gbif_codes){
+  assign(paste0('occ_',grep(k, gbif_codes)),
+         read_tsv(paste0("./data/", k,".csv"),
+                 col_types="cccccccccccccccccccicnnnnnnnnTnnnccccccccTcccccTcc"))
+  doublecheck<-bind_rows(doublecheck, get(paste0('occ_',grep(k, gbif_codes))))
+}
+
+length(c(unique(occ_1$species), #three lithobates
+unique(occ_2$species), #four
+unique(occ_3$species),
+unique(occ_4$species),
+unique(occ_5$species)))
+
+View(anuran_occ)
+
+# remove occ with NA
+na_occ<-doublecheck %>% filter(is.na(decimalLatitude))
+
+# remove occurrences within the ocean 
+anuran_occ_orig<-anuran_occ
+doublecheck <- doublecheck %>%
+  filter(!is.na(decimalLatitude)) %>%
+  cc_sea(lon = "decimalLongitude",  lat = "decimalLatitude")
+
+# count occurrences pulled down ----
+occ_count<-doublecheck %>% 
+  group_by(species) %>%
+  mutate(n_step5=n()) %>%
   distinct(decimalLatitude, decimalLongitude, year, .keep_all = TRUE) %>%
-  nrow() #still missing 500 points
-
-#taxonomic movements?
-
-#map where the points occur ----
-library(maps)
-states <- st_as_sf(map("state", plot = FALSE, fill = TRUE))
-acrep_sf<-acrep_occ %>% st_as_sf(coords=c("decimalLongitude", "decimalLatitude"),
-                        crs=4326)
-ggplot()+
-  geom_sf(data=states)+
-  geom_sf(data=acrep_sf, alpha=0.2)+
-  coord_sf(xlim=st_bbox(acrep_sf)[c(1,3)],
-           ylim=st_bbox(acrep_sf)[c(2,4)])
+  mutate(n_step6.1=n()) %>%
+  slice(1) %>% select(species, n_step5, n_step6.1)
 
 
-#ISSUES PRESENT ----
-tibble(iss=unique(acrep_occ$issue)) %>% 
-  separate(iss, into=paste0("x_", 1:6), sep=";") %>%
-  mutate(test="test") %>%
-  pivot_longer(-test) %>%
-  filter(!is.na(value)) %>%
-  group_by(value) %>% slice(1) %>% select(value)
 
-acrep_ndup<-acrepitans %>%
-  arrange(desc(year)) %>%
-  filter(!duplicated(decimalLatitude, decimalLongitude, year))
-nrow(old_acrep);nrow(acrep_ndup)
+anuran.taxa.table<-read.csv('./data/AnuranTaxRef_20200708.csv') %>% 
+  right_join(occ_count, by=c("final.taxa"="species"))
 
-nrow(acrep)
+occ_difference<-occ_count %>% left_join(orig_filt, by=c('species'='final.taxa')) %>%
+  select(species, `5`, n_step5, `6`, n_step6.1) %>%
+  mutate(step5_dif=`5`-n_step5,
+         step6_dif=`6`-n_step6.1)
 
-ranas<-read.csv('data/occ_data_used/Rana muscosa.csv') %>%
-  bind_rows(read.csv('data/occ_data_used/Rana pretiosa.csv'))
-ranas %>%
-  ggplot()+
-  geom_histogram(aes(x=year, fill=final.taxa), alpha=0.5) +
-  scale_x_continuous(limits=c(1870,2020))+
-  facet_grid(~final.taxa, scales='free_y')+
-  scale_fill_discrete(guide=F)
+occ_difference %>%
+  ggplot()+geom_histogram(aes(x=step6_dif))
+
+occ_difference %>% arrange(step6_dif)
