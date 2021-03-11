@@ -33,7 +33,6 @@ orig_filt<-orig_filt %>%
   arrange(desc(`5`)) %>%
   filter(!duplicated(final.taxa))
 
-for(i in 1:nrow(orig_filt)){orig_filt$roll_occ[i]<-sum(orig_filt[1:i,3])}
 head(orig_filt)
 
 # get gbif species keys ----
@@ -43,14 +42,19 @@ for(u in 1:nrow(sp_range_wiL48)){
                                    rank='species', kingdom='animals')
   anuran.gbif.taxa<-bind_rows(anuran.gbif.taxa1, anuran.gbif.taxa)
 }
+anuran.taxa.table<-read.csv('./data/AnuranTaxRef_20200708.csv')
 anuran.gbif.taxa<-anuran.gbif.taxa %>%
   filter(!(species %in% sp_exclude), #remove species not interested in 
-         !duplicated(speciesKey)) %>% #remove duplicated species to not collect twice
-  left_join(orig_filt, by=c('canonicalName'='final.taxa')) %>% #order to optimize download
-  arrange(desc(`5`)) %>%
-  filter(!duplicated(speciesKey))
+         !duplicated(speciesKey))  #remove duplicated species to not collect twice
+  
+for(k in 1:nrow(anuran.gbif.taxa)){
+  anuran.gbif.taxa$n_occ[k]<-occ_count(taxonKey=anuran.gbif.taxa$speciesKey[k], 
+                                        georeferenced = T)
+  anuran.gbif.taxa <-arrange(anuran.gbif.taxa, desc(n_occ))
+  anuran.gbif.taxa$roll_occ[k]<-sum(anuran.gbif.taxa$n_occ[1:k])
+}
 
-View(anuran.gbif.taxa %>% select(species, `5`,roll_occ) %>% left_join(occ_count))
+View(anuran.gbif.taxa %>% select(canonicalName, speciesKey, n_occ, roll_occ))
 
 # set up a four loop to pull down occ (> 100k occ) ----
 # automate pulling from species list
@@ -58,7 +62,7 @@ ind_mat<-matrix(c(1,3,4,11,12,24,25,92), ncol=2, byrow = T)
 anuran_occ<-NULL #where all occ kept eventually
 gbif_codes<- NULL #keep the download codes
 
-for(j in 1:5){
+for(j in 1:4){
   gbif_download = occ_download(
     #step 1 - get occ for a species
     pred_in("taxonKey",  anuran.gbif.taxa$speciesKey[ind_mat[j,1]:ind_mat[j,2]]), 
@@ -81,51 +85,104 @@ for(j in 1:5){
   anuran_occ<-bind_rows(anuran_occ, occ1)
   gbif_codes<-append(gbif_codes, gbif_download[1])
 }
-
-doublecheck<-NULL
-for(k in gbif_codes){
-  assign(paste0('occ_',grep(k, gbif_codes)),
-         read_tsv(paste0("./data/", k,".csv"),
-                 col_types="cccccccccccccccccccicnnnnnnnnTnnnccccccccTcccccTcc"))
-  doublecheck<-bind_rows(doublecheck, get(paste0('occ_',grep(k, gbif_codes))))
-}
-
-length(c(unique(occ_1$species), #three lithobates
-unique(occ_2$species), #four
-unique(occ_3$species),
-unique(occ_4$species),
-unique(occ_5$species)))
-
+write.table(gbif_codes,
+            "GBIF_codes_20210311.txt")
 View(anuran_occ)
 
 # remove occ with NA
-na_occ<-doublecheck %>% filter(is.na(decimalLatitude))
+na_occ<-anuran_occ %>% filter(is.na(decimalLatitude))
 
 # remove occurrences within the ocean 
 anuran_occ_orig<-anuran_occ
-doublecheck <- doublecheck %>%
+anuran_occ <- anuran_occ %>%
   filter(!is.na(decimalLatitude)) %>%
   cc_sea(lon = "decimalLongitude",  lat = "decimalLatitude")
 
 # count occurrences pulled down ----
-occ_count<-doublecheck %>% 
+occ_count<-anuran_occ %>% 
   group_by(species) %>%
   mutate(n_step5=n()) %>%
   distinct(decimalLatitude, decimalLongitude, year, .keep_all = TRUE) %>%
   mutate(n_step6.1=n()) %>%
   slice(1) %>% select(species, n_step5, n_step6.1)
 
-
-
-anuran.taxa.table<-read.csv('./data/AnuranTaxRef_20200708.csv') %>% 
-  right_join(occ_count, by=c("final.taxa"="species"))
-
-occ_difference<-occ_count %>% left_join(orig_filt, by=c('species'='final.taxa')) %>%
+occ_difference<-occ_count %>% 
+  left_join(orig_filt %>% left_join(anuran.taxa.table, by=c("Species"="species")),
+            by=c('species'='final.taxa')) %>%
   select(species, `5`, n_step5, `6`, n_step6.1) %>%
   mutate(step5_dif=`5`-n_step5,
          step6_dif=`6`-n_step6.1)
-
+write_csv(occ_difference,"occ_download_occurrence_differences.csv")
+# visualize the difference ----
+library(scales)
 occ_difference %>%
-  ggplot()+geom_histogram(aes(x=step6_dif))
+  ggplot()+
+  geom_histogram(aes(x=step6_dif))+
+  geom_text(data=data.frame(),
+            aes(x=-100, y=10, label="more occ\nnow"))+
+  geom_text(data=data.frame(),
+            aes(x=10, y=10, label="more occ\npast"))+
+  scale_x_continuous("Kept Occurrences", 
+                     breaks=c(-3000,-1000,-100,-10,0,10,100,1000,3000),
+                     trans=scales::pseudo_log_trans(sigma=.2))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle=20, hjust=0.9))
 
+occ_difference %>% ungroup() %>% arrange(step6_dif) %>%
+  filter(!is.na(step6_dif)) %>% slice(1:2, (n()-1), n())
+
+#identify species to look at ----
 occ_difference %>% arrange(step6_dif)
+random_number<-rpois(1,92/5)
+rcs_sample<-occ_difference %>% arrange(step6_dif) %>%
+  ungroup() %>%
+  slice(random_number*1:5)
+rcs_sample
+
+#investigating difference in datasets
+occ_difference %>% filter(step6_dif < 0) %>% 
+  ungroup() %>% sample_n(1)
+crs.geo <- st_crs("+proj=longlat +ellps=WGS84 +datum=WGS84")
+old_anaxhous<-read.csv('data/occ_data_used/Anaxyrus houstonensis.csv')
+new_anaxhous<-anuran_occ %>%
+  filter(species == "Anaxyrus houstonensis") %>%
+  distinct(decimalLatitude, decimalLongitude, year, .keep_all = TRUE) 
+
+ggplot()+
+  geom_sf(data=old_anaxhous %>%
+            st_as_sf(coords=c("Longitude","Latitude"), crs = crs.geo),
+          color="red", alpha=0.2)+
+  geom_sf(data=new_anaxhous%>%
+            st_as_sf(coords=c("decimalLongitude","decimalLatitude"), crs = crs.geo),
+          color='goldenrod3', alpha=0.2)+
+  theme_bw()
+
+old_anaxhous %>% select(Longitude, Latitude, year) %>%
+  semi_join(new_anaxhous %>% 
+              select(decimalLongitude, decimalLatitude, year) %>%
+              rename(Longitude=decimalLongitude, Latitude=decimalLatitude))
+# :( none match at all.
+
+crs.albers <- st_crs("+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=km +no_defs")#2.12kb
+o_ah_buf<-old_anaxhous %>% 
+  st_as_sf(coords=c("Longitude","Latitude"), crs = crs.geo) %>%
+  st_transform(crs.albers) %>% st_buffer(1) %>%
+  st_union()
+n_ah_buf<-new_anaxhous %>%
+  st_as_sf(coords=c("decimalLongitude","decimalLatitude"), crs = crs.geo) %>%
+  st_transform(crs.albers) %>% st_buffer(1) %>%
+  st_union()
+
+library(maps)
+states <- st_as_sf(map("state", plot = FALSE, fill = TRUE)) %>% 
+  st_transform(crs.albers)
+ggplot()+
+  #geom_sf(data=states[states$ID=='texas',])+
+  geom_sf(data=o_ah_buf, fill='red', color='red',alpha=0.3)+
+  geom_sf(data=n_ah_buf, fill='goldenrod3', color='goldenrod3', alpha=0.3)
+
+st_area(n_ah_buf)-st_area(o_ah_buf) #change in area
+
+ah_dif_buff<-st_difference(n_ah_buf, o_ah_buf)
+ah_dif_buff
+ggplot()+geom_sf(data=ah_dif_buff, fill='purple', color='purple')
