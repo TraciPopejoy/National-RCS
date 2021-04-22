@@ -5,7 +5,7 @@ email="tracipdubose@gmail.com" # your email
 
 # don't pull down occurrences for species I'm not going to use ----
 # excluding those with < 20% range in US
-sp_range_wiL48 <-read.csv('rcs_results/sp_range_within_US.csv') %>% 
+sp_range_wiL48 <-read.csv('rcs_results/old_data/sp_range_within_US.csv') %>% 
   dplyr::select(-X)
 # removing exotics based on NIAS
 NAS_exotic<-c('Osteopilus septentrionalis','Xenopus laevis')
@@ -31,20 +31,25 @@ anuran.gbif.taxa<-anuran.gbif.taxa %>%
   
 
 # build WKT ----
-na_poly<-read_sf('G:/Shared drives/Anuran Biodiversity Project/SDMs/Occurrence Data/North America Shapefile for Filtering')
-ggplot(na_poly)+geom_sf()
-#install.packages('wellknown')
+na_poly<-read_sf('/home/tracidubose/RCS_Anuran_input/na_poly_filter/')
 
-library(rgeos);library(wellknown)
-na_poly_simp<-na_poly %>% st_buffer(.01) %>%
-  as_Spatial() %>% gSimplify(spgeom=., tol=0.5)
+library(rgeos)
+na_poly_simp<-na_poly %>% 
+  as_Spatial() %>% 
+  spTransform(CRSobj = "+proj=aea +lat_1=29.5 +lat_2=45.5 +lat_0=37.5 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=km +no_defs") %>% 
+  gBuffer(width=10) %>% 
+  gSimplify(spgeom=., tol=15)
 plot(na_poly_simp)
 
-na_poly_su<-gUnaryUnion(na_poly_simp)
-plot(na_poly_su)
-na_land_wkt<-sf_convert(st_as_sf(na_poly_su))
+na_poly_wkt<-na_poly_simp %>% spTransform(CRSobj = "+proj=longlat +ellps=WGS84 +datum=WGS84")
+library(wicket)
+na_land_wkt<-sp_convert(na_poly_wkt)
+nchar(na_land_wkt)
 
+saveRDS(na_poly_wkt, file='north_american_poly.rds')
 saveRDS(na_land_wkt, file='north_america_WKT.rds')
+
+na_land_wkt<-readRDS('data/north_america_WKT.rds')
 
 # set up a for loop to pull down occ (> 100k occ) ----
 # automate pulling from species list
@@ -77,21 +82,17 @@ for(j in 1:2){
   gbif_codes<-append(gbif_codes, gbif_download[1])
 }
 write.table(gbif_codes,
-            "GBIF_codes_20210329.txt")
+            "GBIF_codes_20210330.txt")
+nrow(anuran_occ)
+91460+62481
 View(anuran_occ)
 
 # remove occ with NA
-anuran_occ %>% filter(is.na(decimalLatitude))
+anuran_occ %>% filter(is.na(decimalLatitude)) %>% nrow()
 
-# remove occurrences within the ocean 
-library(CoordinateCleaner)
-anuran_occ_orig<-anuran_occ
-anuran_occ<-anuran_occ %>%
-  filter(!is.na(decimalLatitude)) %>%
-  cc_sea(lon = "decimalLongitude",  lat = "decimalLatitude")
-#lost 1817 
-1817/nrow(anuran_occ_orig)*100
+write.csv(anuran_occ, 'anuranOccOrig.csv')
 
+anuran_occ<-read.csv('anuranOccOrig.csv') %>% select(-X)
 # count occurrences pulled down ----
 occ_count<-anuran_occ %>% 
   group_by(species) %>%
@@ -101,7 +102,6 @@ occ_count<-anuran_occ %>%
   slice(1) %>% select(species, n_step5, n_step6.1)
 
 occ_count %>% arrange(n_step6.1)
-
 
 #read in each dataset and write out by species ----
 main_dir<-'G:/Shared drives/Anuran Biodiversity Project/SDMs/Occurrence Data/Download & Filtering/'
@@ -144,6 +144,7 @@ fin_counts<-bind_rows(gbif_occs, hm_occs) %>%
   filter(!(final.taxa %in% sp_exclude))
 
 fin_counts %>% arrange(n) #likely should exclude < 10 
+write.csv(fin_counts, 'rcs_results/occurrence_counts_used.csv')
 #checking that taxa are congruent and which to use for selecting on
 bind_rows(gbif_occs, hm_occs) %>% group_by(species, source) %>% slice(1) %>% select(final.taxa,tax,species, family, Longitude, Latitude, year, source,) %>% View()
 
