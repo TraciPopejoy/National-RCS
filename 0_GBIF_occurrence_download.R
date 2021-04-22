@@ -1,7 +1,4 @@
 library(rgbif); library(tidyverse); library(sf)
-user="tracidubose" # GBIF user name
-pwd="anuran4eva" # GBIF password
-email="tracipdubose@gmail.com" # your email
 
 # don't pull down occurrences for species I'm not going to use ----
 # excluding those with < 20% range in US
